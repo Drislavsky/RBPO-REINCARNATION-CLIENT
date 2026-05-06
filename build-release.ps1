@@ -1,14 +1,12 @@
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BuildDir = Join-Path $Root "build"
-$ArtifactDir = Join-Path $Root "artifacts\BMTX"
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
 
-cmake -S $Root -B $BuildDir -G "Visual Studio 17 2022" -A x64
-cmake --build $BuildDir --config Release
+$artifactDir = Join-Path $PSScriptRoot "artifacts\BMTX"
+New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+Copy-Item "build\Release\BMTX.exe" $artifactDir -Force
+Copy-Item "build\Release\BMTXService.exe" $artifactDir -Force
+Copy-Item "assets\bmtx.ico" $artifactDir -Force
 
-New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
-Copy-Item -Force (Join-Path $BuildDir "Release\BMTX.exe") $ArtifactDir
-Copy-Item -Force (Join-Path $Root "README.md") $ArtifactDir
-
-Write-Host "Artifact created: $ArtifactDir"
+Write-Host "Artifacts copied to $artifactDir"

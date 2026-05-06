@@ -1,14 +1,26 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <strsafe.h>
+#include <tlhelp32.h>
+#include <winsvc.h>
+#include <rpc.h>
+
+#include <string>
+#include <vector>
 
 #include "resource.h"
+#include "bmtx_rpc.h"
 
 namespace {
 
 constexpr wchar_t kWindowClassName[] = L"BMTXMainWindow";
 constexpr wchar_t kAppTitle[] = L"BMTX";
 constexpr wchar_t kMutexName[] = L"Local\\BMTX_SINGLE_INSTANCE";
+constexpr wchar_t kServiceName[] = L"BMTXService";
+constexpr wchar_t kServiceProcessName[] = L"BMTXService.exe";
+constexpr wchar_t kRpcEndpoint[] = L"BMTX_RPC_ALPC_ENDPOINT";
+constexpr wchar_t kServiceChildFlag[] = L"--bmtx-service-child";
+constexpr wchar_t kServicePidPrefix[] = L"--bmtx-service-pid=";
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kTrayId = 1;
 
@@ -32,6 +44,342 @@ bool HasHiddenStartupFlag(LPWSTR command_line) {
            wcsstr(command_line, L"--background") != nullptr ||
            wcsstr(command_line, L"--minimized") != nullptr ||
            wcsstr(command_line, L"/hidden") != nullptr;
+}
+
+
+std::vector<std::wstring> GetCommandLineArguments() {
+    std::vector<std::wstring> result;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == nullptr) {
+        return result;
+    }
+
+    for (int i = 0; i < argc; ++i) {
+        result.emplace_back(argv[i]);
+    }
+
+    LocalFree(argv);
+    return result;
+}
+
+bool HasCommandLineArgument(const wchar_t* argument) {
+    const auto args = GetCommandLineArguments();
+    for (const auto& arg : args) {
+        if (_wcsicmp(arg.c_str(), argument) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+DWORD GetServicePidFromCommandLine() {
+    const auto args = GetCommandLineArguments();
+    const size_t prefix_length = wcslen(kServicePidPrefix);
+
+    for (const auto& arg : args) {
+        if (_wcsnicmp(arg.c_str(), kServicePidPrefix, prefix_length) == 0) {
+            wchar_t* end = nullptr;
+            const unsigned long value = wcstoul(arg.c_str() + prefix_length, &end, 10);
+            if (end != nullptr && *end == L'\0' && value != 0 && value <= 0xFFFFFFFFul) {
+                return static_cast<DWORD>(value);
+            }
+        }
+    }
+
+    return 0;
+}
+
+void WriteClientDebugLog(const wchar_t* message) {
+    wchar_t temp_path[MAX_PATH]{};
+    if (GetTempPathW(ARRAYSIZE(temp_path), temp_path) == 0) {
+        return;
+    }
+
+    wchar_t log_path[MAX_PATH]{};
+    StringCchPrintfW(log_path, ARRAYSIZE(log_path), L"%sBMTX_client_debug.log", temp_path);
+
+    HANDLE file = CreateFileW(
+        log_path,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    wchar_t line[768]{};
+    StringCchPrintfW(line, ARRAYSIZE(line), L"PID %lu: %s\r\n", GetCurrentProcessId(), message);
+    DWORD bytes_written = 0;
+    WriteFile(file, line, static_cast<DWORD>(wcslen(line) * sizeof(wchar_t)), &bytes_written, nullptr);
+    CloseHandle(file);
+}
+
+void ShowStartupError(const wchar_t* operation) {
+    const DWORD error = GetLastError();
+    wchar_t text[512]{};
+    StringCchPrintfW(text, ARRAYSIZE(text), L"%s failed. GetLastError = %lu", operation, error);
+    MessageBoxW(nullptr, text, kAppTitle, MB_OK | MB_ICONERROR);
+}
+
+bool QueryBmtxServiceStatus(SERVICE_STATUS_PROCESS* status) {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scm == nullptr) {
+        return false;
+    }
+
+    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_STATUS | SERVICE_START);
+    if (service == nullptr) {
+        CloseServiceHandle(scm);
+        return false;
+    }
+
+    DWORD bytes_needed = 0;
+    const BOOL ok = QueryServiceStatusEx(
+        service,
+        SC_STATUS_PROCESS_INFO,
+        reinterpret_cast<LPBYTE>(status),
+        sizeof(*status),
+        &bytes_needed);
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return ok != FALSE;
+}
+
+bool StartBmtxServiceAndWaitRunning() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scm == nullptr) {
+        ShowStartupError(L"OpenSCManagerW");
+        return false;
+    }
+
+    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_STATUS | SERVICE_START);
+    if (service == nullptr) {
+        CloseServiceHandle(scm);
+        ShowStartupError(L"OpenServiceW(BMTXService)");
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS status{};
+    DWORD bytes_needed = 0;
+    if (!QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&status), sizeof(status), &bytes_needed)) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+        ShowStartupError(L"QueryServiceStatusEx");
+        return false;
+    }
+
+    if (status.dwCurrentState == SERVICE_STOPPED) {
+        if (!StartServiceW(service, 0, nullptr) && GetLastError() != ERROR_SERVICE_ALREADY_RUNNING) {
+            CloseServiceHandle(service);
+            CloseServiceHandle(scm);
+            ShowStartupError(L"StartServiceW(BMTXService)");
+            return false;
+        }
+    }
+
+    const DWORD start_tick = GetTickCount();
+    while (true) {
+        if (!QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, reinterpret_cast<LPBYTE>(&status), sizeof(status), &bytes_needed)) {
+            CloseServiceHandle(service);
+            CloseServiceHandle(scm);
+            ShowStartupError(L"QueryServiceStatusEx(wait)");
+            return false;
+        }
+
+        if (status.dwCurrentState == SERVICE_RUNNING) {
+            CloseServiceHandle(service);
+            CloseServiceHandle(scm);
+            return true;
+        }
+
+        if (status.dwCurrentState == SERVICE_STOPPED || GetTickCount() - start_tick > 30000) {
+            CloseServiceHandle(service);
+            CloseServiceHandle(scm);
+            MessageBoxW(nullptr, L"BMTXService did not reach the Running state.", kAppTitle, MB_OK | MB_ICONERROR);
+            return false;
+        }
+
+        Sleep(500);
+    }
+}
+
+bool EnsureServiceRunningOrStartAndExit(bool* should_exit) {
+    *should_exit = false;
+
+    SERVICE_STATUS_PROCESS status{};
+    if (!QueryBmtxServiceStatus(&status)) {
+        ShowStartupError(L"QueryBmtxServiceStatus");
+        return false;
+    }
+
+    if (status.dwCurrentState == SERVICE_STOPPED) {
+        const bool started = StartBmtxServiceAndWaitRunning();
+        *should_exit = true;
+        return started;
+    }
+
+    if (status.dwCurrentState == SERVICE_START_PENDING) {
+        const bool started = StartBmtxServiceAndWaitRunning();
+        *should_exit = true;
+        return started;
+    }
+
+    return true;
+}
+
+DWORD GetParentProcessId() {
+    const DWORD current_pid = GetCurrentProcessId();
+    DWORD parent_pid = 0;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (entry.th32ProcessID == current_pid) {
+                parent_pid = entry.th32ParentProcessID;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return parent_pid;
+}
+
+std::wstring GetProcessImageNameByPid(DWORD pid) {
+    std::wstring result;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (entry.th32ProcessID == pid) {
+                result = entry.szExeFile;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+
+    CloseHandle(snapshot);
+    return result;
+}
+
+DWORD GetRunningServiceProcessId() {
+    SERVICE_STATUS_PROCESS status{};
+    if (!QueryBmtxServiceStatus(&status)) {
+        return 0;
+    }
+
+    if (status.dwCurrentState != SERVICE_RUNNING) {
+        return 0;
+    }
+
+    return status.dwProcessId;
+}
+
+bool IsParentBmtxService() {
+    const DWORD parent_pid = GetParentProcessId();
+    if (parent_pid == 0) {
+        WriteClientDebugLog(L"parent check failed: parent PID is 0");
+        return false;
+    }
+
+    const DWORD service_pid = GetRunningServiceProcessId();
+    if (service_pid == 0) {
+        WriteClientDebugLog(L"parent check failed: service is not running or PID is 0");
+        return false;
+    }
+
+    if (parent_pid != service_pid) {
+        wchar_t text[256]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"parent check failed: parent PID %lu != service PID %lu", parent_pid, service_pid);
+        WriteClientDebugLog(text);
+        return false;
+    }
+
+    const std::wstring parent_name = GetProcessImageNameByPid(parent_pid);
+    if (_wcsicmp(parent_name.c_str(), kServiceProcessName) != 0) {
+        wchar_t text[256]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"parent check failed: parent image is '%s'", parent_name.c_str());
+        WriteClientDebugLog(text);
+        return false;
+    }
+
+    return true;
+}
+
+bool IsValidServiceLaunchedClient() {
+    if (!HasCommandLineArgument(kServiceChildFlag)) {
+        WriteClientDebugLog(L"manual launch rejected: missing --bmtx-service-child");
+        return false;
+    }
+
+    const DWORD command_line_service_pid = GetServicePidFromCommandLine();
+    if (command_line_service_pid == 0) {
+        WriteClientDebugLog(L"manual launch rejected: missing or invalid --bmtx-service-pid=<pid>");
+        return false;
+    }
+
+    const DWORD actual_service_pid = GetRunningServiceProcessId();
+    if (actual_service_pid == 0 || command_line_service_pid != actual_service_pid) {
+        wchar_t text[256]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"service marker rejected: command line service PID %lu != actual service PID %lu", command_line_service_pid, actual_service_pid);
+        WriteClientDebugLog(text);
+        return false;
+    }
+
+    return IsParentBmtxService();
+}
+
+bool StopServiceThroughRpc() {
+    RPC_WSTR string_binding = nullptr;
+    RPC_STATUS status = RpcStringBindingComposeW(
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(L"ncalrpc")),
+        nullptr,
+        reinterpret_cast<RPC_WSTR>(const_cast<wchar_t*>(kRpcEndpoint)),
+        nullptr,
+        &string_binding);
+    if (status != RPC_S_OK) {
+        SetLastError(status);
+        return false;
+    }
+
+    handle_t binding = nullptr;
+    status = RpcBindingFromStringBindingW(string_binding, &binding);
+    RpcStringFreeW(&string_binding);
+    if (status != RPC_S_OK) {
+        SetLastError(status);
+        return false;
+    }
+
+    bool ok = false;
+    RpcTryExcept {
+        BmtxStopService(binding);
+        ok = true;
+    }
+    RpcExcept(1) {
+        SetLastError(RpcExceptionCode());
+        ok = false;
+    }
+    RpcEndExcept
+
+    RpcBindingFree(&binding);
+    return ok;
 }
 
 void ShowLastErrorMessage(const wchar_t* operation) {
@@ -123,15 +471,13 @@ void RecreateTrayIcon() {
 }
 
 void ExitApplication() {
-    g_exit_requested = true;
-    RemoveTrayIcon();
-
-    if (g_main_window != nullptr) {
-        DestroyWindow(g_main_window);
-        g_main_window = nullptr;
-    } else {
-        PostQuitMessage(0);
+    if (!StopServiceThroughRpc()) {
+        ShowLastErrorMessage(L"RPC BmtxStopService");
+        return;
     }
+
+    // The service owns the GUI lifetime and will terminate this process during shutdown.
+    HideMainWindow();
 }
 
 void ShowTrayMenu() {
@@ -359,6 +705,39 @@ bool RegisterMainWindowClass() {
 
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR command_line, int show_command) {
     g_instance = instance;
+
+    // IMPORTANT:
+    // A manually started GUI process must never create a window or tray icon.
+    // It may only perform the required bootstrap action: start BMTXService if it is stopped,
+    // wait until it reaches Running, and then terminate immediately.
+    // The real GUI is allowed to continue only when it was launched by BMTXService with
+    // the service-child marker and a PID that matches the currently running service process.
+    if (!HasCommandLineArgument(kServiceChildFlag)) {
+        SERVICE_STATUS_PROCESS status{};
+        if (QueryBmtxServiceStatus(&status) &&
+            (status.dwCurrentState == SERVICE_STOPPED || status.dwCurrentState == SERVICE_START_PENDING)) {
+            WriteClientDebugLog(L"manual bootstrap: service is stopped or starting; starting/waiting service, then exiting before UI/tray");
+            StartBmtxServiceAndWaitRunning();
+        } else {
+            WriteClientDebugLog(L"manual launch rejected before UI/tray: missing --bmtx-service-child");
+        }
+        return 0;
+    }
+
+    bool should_exit_after_start = false;
+    if (!EnsureServiceRunningOrStartAndExit(&should_exit_after_start)) {
+        return 1;
+    }
+
+    if (should_exit_after_start) {
+        WriteClientDebugLog(L"service-child instance saw stopped/starting service unexpectedly; exiting");
+        return 0;
+    }
+
+    if (!IsValidServiceLaunchedClient()) {
+        WriteClientDebugLog(L"service-child validation failed before UI/tray");
+        return 0;
+    }
 
     g_mutex = CreateMutexW(nullptr, TRUE, kMutexName);
     if (g_mutex == nullptr) {
