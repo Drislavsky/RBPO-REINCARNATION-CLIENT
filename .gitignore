@@ -1,0 +1,10 @@
+build/
+artifacts/
+.vs/
+out/
+*.user
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.log
