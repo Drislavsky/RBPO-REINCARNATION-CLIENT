@@ -14,9 +14,6 @@ set(RPC_HEADER ${RPC_GENERATED_DIR}/bmtx_rpc.h)
 set(RPC_CLIENT_STUB ${RPC_GENERATED_DIR}/bmtx_rpc_c.c)
 set(RPC_SERVER_STUB ${RPC_GENERATED_DIR}/bmtx_rpc_s.c)
 
-# Generate RPC files during CMake configure, not only during build.
-# This makes bmtx_rpc.h available immediately for Visual Studio IntelliSense
-# and avoids E1696 / E0020 before the actual build starts.
 file(MAKE_DIRECTORY ${RPC_GENERATED_DIR})
 execute_process(
     COMMAND ${MIDL_EXECUTABLE}
@@ -89,6 +86,7 @@ target_link_libraries(BMTXService PRIVATE
     rpcrt4
     wtsapi32
     userenv
+    winhttp
 )
 
 if(MSVC)
