@@ -1,0 +1,8 @@
+[
+    uuid(7dcb4680-4e4f-4b25-a9ab-4f6d2f6dbd5a),
+    version(1.0)
+]
+interface BmtxRpc
+{
+    void BmtxStopService([in] handle_t Binding);
+}
