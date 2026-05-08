@@ -1,0 +1,38 @@
+ВАЖНО: причина, почему ручной запуск продолжал работать
+========================================================
+
+В старой версии BMTXService.exe --install НЕ обновлял ImagePath существующей службы.
+Если служба BMTXService уже была установлена раньше, Windows продолжала запускать
+СТАРЫЙ BMTXService.exe из старой папки, а он запускал СТАРЫЙ BMTX.exe.
+Поэтому ты мог пересобирать новый проект, но реально работала старая установленная служба.
+
+В этой версии InstallService исправлен: если служба уже существует, он делает
+ChangeServiceConfigW(...) и принудительно переписывает путь службы на текущий
+build\\Release\\BMTXService.exe.
+
+Чтобы гарантированно поставить эту версию:
+
+1) Открой PowerShell от администратора.
+2) Перейди в папку проекта.
+3) Выполни:
+
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+cd .\\build\\Release
+.\\BMTXService.exe --install
+sc.exe qc BMTXService
+sc.exe start BMTXService
+
+В sc.exe qc BMTXService проверь BINARY_PATH_NAME. Он обязан указывать на текущую папку build\\Release.
+
+Проверка ручного запуска:
+
+.\\BMTX.exe
+notepad "$env:TEMP\\BMTX_client_debug.log"
+
+Если служба уже Running, ручной BMTX.exe должен завершиться до окна/трея с логом:
+manual launch rejected before UI/tray: missing --bmtx-service-child
+
+Если служба была Stopped, ручной BMTX.exe по заданию стартует службу, дождётся Running и завершится.
+После этого появившийся BMTX.exe — это уже экземпляр, запущенный службой, а не ручной процесс.
