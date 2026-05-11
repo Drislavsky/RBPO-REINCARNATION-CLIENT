@@ -4,6 +4,8 @@
 #include <tlhelp32.h>
 #include <winsvc.h>
 #include <rpc.h>
+#include <commdlg.h>
+#include <shlobj.h>
 
 #include <string>
 #include <vector>
@@ -36,6 +38,9 @@ constexpr int IDC_LICENSE_EDIT = 50004;
 constexpr int IDC_ACTIVATE_BUTTON = 50005;
 constexpr int IDC_LOGOUT_BUTTON = 50006;
 constexpr int IDC_REFRESH_LICENSE_BUTTON = 50007;
+constexpr int IDC_SCAN_FILE_BUTTON = 50008;
+constexpr int IDC_SCAN_DIR_BUTTON = 50009;
+constexpr int IDC_REFRESH_DB_BUTTON = 50010;
 
 HINSTANCE g_instance = nullptr;
 HWND g_main_window = nullptr;
@@ -55,9 +60,15 @@ HWND g_license_edit = nullptr;
 HWND g_activate_button = nullptr;
 HWND g_logout_button = nullptr;
 HWND g_refresh_license_button = nullptr;
+HWND g_scan_file_button = nullptr;
+HWND g_scan_dir_button = nullptr;
+HWND g_refresh_db_button = nullptr;
 
 BMTX_CLIENT_STATE g_client_state{};
+BMTX_AV_DB_INFO g_av_db_info{};
+BMTX_SCAN_RESULT g_last_scan_result{};
 std::wstring g_ui_error;
+std::wstring g_scan_status;
 
 bool HasHiddenStartupFlag(LPWSTR command_line) {
     if (command_line == nullptr) {
@@ -507,6 +518,57 @@ DWORD RefreshLicenseThroughRpc(BMTX_CLIENT_STATE* state) {
     return result;
 }
 
+DWORD GetAvDbInfoThroughRpc(BMTX_AV_DB_INFO* info) {
+    handle_t binding = nullptr;
+    if (!ComposeRpcBinding(&binding)) {
+        return GetLastError();
+    }
+    DWORD result = ERROR_SUCCESS;
+    RpcTryExcept {
+        result = BmtxGetAvDbInfo(binding, info);
+    }
+    RpcExcept(1) {
+        result = RpcExceptionCode();
+    }
+    RpcEndExcept
+    RpcBindingFree(&binding);
+    return result;
+}
+
+DWORD ScanFileThroughRpc(const std::wstring& path, BMTX_SCAN_RESULT* result) {
+    handle_t binding = nullptr;
+    if (!ComposeRpcBinding(&binding)) {
+        return GetLastError();
+    }
+    DWORD rc = ERROR_SUCCESS;
+    RpcTryExcept {
+        rc = BmtxScanFile(binding, const_cast<wchar_t*>(path.c_str()), result);
+    }
+    RpcExcept(1) {
+        rc = RpcExceptionCode();
+    }
+    RpcEndExcept
+    RpcBindingFree(&binding);
+    return rc;
+}
+
+DWORD ScanDirectoryThroughRpc(const std::wstring& path, BMTX_SCAN_RESULT* result) {
+    handle_t binding = nullptr;
+    if (!ComposeRpcBinding(&binding)) {
+        return GetLastError();
+    }
+    DWORD rc = ERROR_SUCCESS;
+    RpcTryExcept {
+        rc = BmtxScanDirectory(binding, const_cast<wchar_t*>(path.c_str()), result);
+    }
+    RpcExcept(1) {
+        rc = RpcExceptionCode();
+    }
+    RpcEndExcept
+    RpcBindingFree(&binding);
+    return rc;
+}
+
 void ShowLastErrorMessage(const wchar_t* operation) {
     const DWORD error = GetLastError();
     wchar_t text[512]{};
@@ -647,6 +709,9 @@ void SetControlsVisible(bool auth, bool license, bool logged_in) {
     ShowWindow(g_activate_button, license ? SW_SHOW : SW_HIDE);
     ShowWindow(g_logout_button, logged_in ? SW_SHOW : SW_HIDE);
     ShowWindow(g_refresh_license_button, logged_in ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_scan_file_button, logged_in && g_client_state.licensed ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_scan_dir_button, logged_in && g_client_state.licensed ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_refresh_db_button, logged_in && g_client_state.licensed ? SW_SHOW : SW_HIDE);
 }
 
 void UpdateControlsFromState() {
@@ -665,6 +730,112 @@ void RefreshStateFromService(bool refresh_license) {
     } else {
         wchar_t text[128]{};
         StringCchPrintfW(text, ARRAYSIZE(text), L"RPC state request failed: %lu", result);
+        g_ui_error = text;
+    }
+    if (g_client_state.licensed) {
+        BMTX_AV_DB_INFO info{};
+        if (GetAvDbInfoThroughRpc(&info) == ERROR_SUCCESS) {
+            g_av_db_info = info;
+        }
+    }
+    UpdateControlsFromState();
+}
+
+std::wstring BuildScanText(const BMTX_SCAN_RESULT& result) {
+    wchar_t buffer[1024]{};
+    StringCchPrintfW(buffer, ARRAYSIZE(buffer), L"Scanned: %lu; infected: %lu; %s", result.scannedObjects, result.infectedObjects, result.message);
+    std::wstring text = buffer;
+    if (result.infectedObjects > 0) {
+        text += L"; threat: ";
+        text += result.threatName;
+        text += L"; first object: ";
+        text += result.firstThreatPath;
+    }
+    return text;
+}
+
+void RefreshAvDbInfo() {
+    BMTX_AV_DB_INFO info{};
+    const DWORD rc = GetAvDbInfoThroughRpc(&info);
+    if (rc == ERROR_SUCCESS) {
+        g_av_db_info = info;
+        g_scan_status = L"Antivirus database information refreshed";
+    } else {
+        wchar_t text[128]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"AV DB RPC failed: %lu", rc);
+        g_ui_error = text;
+    }
+    UpdateControlsFromState();
+}
+
+bool PickFile(std::wstring* path) {
+    wchar_t buffer[MAX_PATH]{};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_main_window;
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = ARRAYSIZE(buffer);
+    ofn.lpstrFilter = L"All files\0*.*\0";
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) {
+        return false;
+    }
+    *path = buffer;
+    return true;
+}
+
+bool PickDirectory(std::wstring* path) {
+    BROWSEINFOW bi{};
+    bi.hwndOwner = g_main_window;
+    bi.lpszTitle = L"Выберите папку для сканирования";
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (pidl == nullptr) {
+        return false;
+    }
+    wchar_t buffer[MAX_PATH]{};
+    const BOOL ok = SHGetPathFromIDListW(pidl, buffer);
+    CoTaskMemFree(pidl);
+    if (!ok) {
+        return false;
+    }
+    *path = buffer;
+    return true;
+}
+
+void OnScanFile() {
+    std::wstring path;
+    if (!PickFile(&path)) {
+        return;
+    }
+    BMTX_SCAN_RESULT result{};
+    const DWORD rc = ScanFileThroughRpc(path, &result);
+    if (rc == ERROR_SUCCESS) {
+        g_last_scan_result = result;
+        g_scan_status = BuildScanText(result);
+        g_ui_error.clear();
+    } else {
+        wchar_t text[128]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"Scan file failed: %lu", rc);
+        g_ui_error = text;
+    }
+    UpdateControlsFromState();
+}
+
+void OnScanDirectory() {
+    std::wstring path;
+    if (!PickDirectory(&path)) {
+        return;
+    }
+    BMTX_SCAN_RESULT result{};
+    const DWORD rc = ScanDirectoryThroughRpc(path, &result);
+    if (rc == ERROR_SUCCESS) {
+        g_last_scan_result = result;
+        g_scan_status = BuildScanText(result);
+        g_ui_error.clear();
+    } else {
+        wchar_t text[128]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"Scan directory failed: %lu", rc);
         g_ui_error = text;
     }
     UpdateControlsFromState();
@@ -714,7 +885,29 @@ void OnActivate() {
     BMTX_CLIENT_STATE state{};
     const DWORD result = ActivateThroughRpc(code, &state);
     g_client_state = state;
-    g_ui_error = result == ERROR_SUCCESS ? L"" : L"Activation failed";
+
+    if (result == ERROR_SUCCESS) {
+        g_ui_error.clear();
+
+        // После успешной активации служба уже должна загрузить AV-базу с сервера.
+        // Сразу запрашиваем информацию о базе, чтобы GUI не ждал ручного нажатия
+        // кнопки "Инфо баз" и сразу показывал фактическое количество сигнатур.
+        BMTX_AV_DB_INFO info{};
+        const DWORD db_result = GetAvDbInfoThroughRpc(&info);
+        if (db_result == ERROR_SUCCESS) {
+            g_av_db_info = info;
+            wchar_t text[256]{};
+            StringCchPrintfW(text, ARRAYSIZE(text), L"License activated; AV database loaded: %lu records", info.recordCount);
+            g_scan_status = text;
+        } else {
+            wchar_t text[256]{};
+            StringCchPrintfW(text, ARRAYSIZE(text), L"License activated, but AV database load failed: %lu", db_result);
+            g_ui_error = text;
+        }
+    } else {
+        g_ui_error = L"Activation failed";
+    }
+
     UpdateControlsFromState();
 }
 
@@ -765,15 +958,20 @@ HWND CreateChildButton(HWND parent, int id, const wchar_t* text, int x, int y, i
 }
 
 void CreateUiControls(HWND window) {
-    g_login_edit = CreateChildEdit(window, IDC_LOGIN_EDIT, 64, 210, 250, 28);
-    g_password_edit = CreateChildEdit(window, IDC_PASSWORD_EDIT, 64, 254, 250, 28, ES_PASSWORD);
-    g_login_button = CreateChildButton(window, IDC_LOGIN_BUTTON, L"Войти", 330, 254, 120, 30);
+    // Fixed layout positions. Keep controls below descriptive text so that long
+    // status strings do not overlap buttons on high-DPI / non-default fonts.
+    g_login_edit = CreateChildEdit(window, IDC_LOGIN_EDIT, 80, 260, 300, 30);
+    g_password_edit = CreateChildEdit(window, IDC_PASSWORD_EDIT, 80, 330, 300, 30, ES_PASSWORD);
+    g_login_button = CreateChildButton(window, IDC_LOGIN_BUTTON, L"Войти", 410, 330, 150, 34);
 
-    g_license_edit = CreateChildEdit(window, IDC_LICENSE_EDIT, 64, 254, 330, 28);
-    g_activate_button = CreateChildButton(window, IDC_ACTIVATE_BUTTON, L"Активировать", 410, 254, 140, 30);
+    g_license_edit = CreateChildEdit(window, IDC_LICENSE_EDIT, 80, 300, 360, 30);
+    g_activate_button = CreateChildButton(window, IDC_ACTIVATE_BUTTON, L"Активировать", 470, 300, 170, 34);
 
-    g_logout_button = CreateChildButton(window, IDC_LOGOUT_BUTTON, L"Выйти из аккаунта", 64, 340, 180, 30);
-    g_refresh_license_button = CreateChildButton(window, IDC_REFRESH_LICENSE_BUTTON, L"Обновить лицензию", 260, 340, 180, 30);
+    g_logout_button = CreateChildButton(window, IDC_LOGOUT_BUTTON, L"Выйти из аккаунта", 80, 410, 225, 38);
+    g_refresh_license_button = CreateChildButton(window, IDC_REFRESH_LICENSE_BUTTON, L"Обновить лицензию", 325, 410, 225, 38);
+    g_scan_file_button = CreateChildButton(window, IDC_SCAN_FILE_BUTTON, L"Сканировать файл", 80, 500, 225, 40);
+    g_scan_dir_button = CreateChildButton(window, IDC_SCAN_DIR_BUTTON, L"Сканировать папку", 325, 500, 225, 40);
+    g_refresh_db_button = CreateChildButton(window, IDC_REFRESH_DB_BUTTON, L"Инфо баз", 570, 500, 140, 40);
 }
 
 void PaintInterface(HWND window) {
@@ -811,7 +1009,7 @@ void PaintInterface(HWND window) {
     HGDIOBJ old_pen = SelectObject(dc, border_pen);
     HGDIOBJ old_brush = SelectObject(dc, panel_brush);
 
-    RECT panel{42, 130, client.right - 42, 396};
+    RECT panel{42, 130, client.right - 42, client.bottom - 92};
     RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 18, 18);
 
     SelectObject(dc, accent_pen);
@@ -827,10 +1025,10 @@ void PaintInterface(HWND window) {
         SetTextColor(dc, RGB(145, 163, 187));
         const wchar_t login_label[] = L"Login";
         const wchar_t password_label[] = L"Password";
-        TextOutW(dc, 64, 188, login_label, static_cast<int>(wcslen(login_label)));
-        TextOutW(dc, 64, 232, password_label, static_cast<int>(wcslen(password_label)));
+        TextOutW(dc, 80, 238, login_label, static_cast<int>(wcslen(login_label)));
+        TextOutW(dc, 80, 308, password_label, static_cast<int>(wcslen(password_label)));
         const wchar_t locked[] = L"Antivirus functionality is locked until authentication succeeds.";
-        TextOutW(dc, panel.left + 24, 304, locked, static_cast<int>(wcslen(locked)));
+        TextOutW(dc, panel.left + 24, 390, locked, static_cast<int>(wcslen(locked)));
     } else if (!g_client_state.licensed) {
         std::wstring user_line = L"USER: ";
         user_line += g_client_state.username;
@@ -839,7 +1037,7 @@ void PaintInterface(HWND window) {
         const wchar_t no_license[] = L"No active license. Antivirus functionality is locked.";
         const wchar_t activation_label[] = L"Activation code";
         TextOutW(dc, panel.left + 24, panel.top + 94, no_license, static_cast<int>(wcslen(no_license)));
-        TextOutW(dc, 64, 232, activation_label, static_cast<int>(wcslen(activation_label)));
+        TextOutW(dc, 80, 278, activation_label, static_cast<int>(wcslen(activation_label)));
     } else {
         std::wstring user_line = L"USER: ";
         user_line += g_client_state.username;
@@ -851,6 +1049,15 @@ void PaintInterface(HWND window) {
         std::wstring expiration = L"LICENSE EXPIRES: ";
         expiration += UnixTimeToText(g_client_state.licenseExpiresAtUnix);
         TextOutW(dc, panel.left + 24, panel.top + 130, expiration.c_str(), static_cast<int>(expiration.size()));
+
+        SetTextColor(dc, RGB(145, 163, 187));
+        wchar_t db_line[256]{};
+        StringCchPrintfW(db_line, ARRAYSIZE(db_line), L"AV DB: %lu records, released %s", g_av_db_info.recordCount, UnixTimeToText(g_av_db_info.releaseDateUnix).c_str());
+        TextOutW(dc, panel.left + 24, panel.top + 166, db_line, static_cast<int>(wcslen(db_line)));
+        if (!g_scan_status.empty()) {
+            RECT scanRect{panel.left + 24, 552, panel.right - 24, panel.bottom - 18};
+            DrawTextW(dc, g_scan_status.c_str(), static_cast<int>(g_scan_status.size()), &scanRect, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS);
+        }
     }
 
     std::wstring message;
@@ -864,7 +1071,7 @@ void PaintInterface(HWND window) {
     }
     if (!message.empty()) {
         SelectObject(dc, small_font);
-        TextOutW(dc, 64, 410, message.c_str(), static_cast<int>(message.size()));
+        TextOutW(dc, 64, panel.bottom + 18, message.c_str(), static_cast<int>(message.size()));
     }
 
     SelectObject(dc, small_font);
@@ -938,6 +1145,15 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w_param, LPARAM l_
             return 0;
         case IDC_REFRESH_LICENSE_BUTTON:
             RefreshStateFromService(true);
+            return 0;
+        case IDC_REFRESH_DB_BUTTON:
+            RefreshAvDbInfo();
+            return 0;
+        case IDC_SCAN_FILE_BUTTON:
+            OnScanFile();
+            return 0;
+        case IDC_SCAN_DIR_BUTTON:
+            OnScanDirectory();
             return 0;
         default:
             break;
@@ -1038,11 +1254,14 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR command_line, int sh
         return 0;
     }
 
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
     g_taskbar_created_message = RegisterWindowMessageW(L"TaskbarCreated");
     g_app_icon = LoadApplicationIcon(GetSystemMetrics(SM_CXICON));
     g_tray_icon = LoadApplicationIcon(GetSystemMetrics(SM_CXSMICON));
 
     if (!RegisterMainWindowClass()) {
+        CoUninitialize();
         CloseHandle(g_mutex);
         return 1;
     }
@@ -1054,14 +1273,15 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR command_line, int sh
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        780,
-        520,
+        960,
+        760,
         nullptr,
         nullptr,
         instance,
         nullptr);
 
     if (g_main_window == nullptr) {
+        CoUninitialize();
         CloseHandle(g_mutex);
         return 1;
     }
@@ -1094,5 +1314,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR command_line, int sh
         g_mutex = nullptr;
     }
 
+    CoUninitialize();
     return static_cast<int>(msg.wParam);
 }

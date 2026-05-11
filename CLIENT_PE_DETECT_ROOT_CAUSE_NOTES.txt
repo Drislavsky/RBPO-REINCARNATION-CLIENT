@@ -1,0 +1,15 @@
+Root cause fixed in src/service.cpp:
+
+1) The server endpoint POST /api/signatures/file does not accept fileType/offsetStart/offsetEnd form fields.
+   It stores MultipartFile contentType as fileType and originalFileName separately.
+   The client previously parsed only fileType, so PE records uploaded as files could be classified wrong.
+
+2) The server uses signature.first-bytes-length=16 in application.properties.
+   The scanner supports this and still indexes by the first 8 bytes for std::map lookup.
+
+3) Scanned file type is now deterministic:
+   .exe/.dll/.sys/.scr -> PE
+   .txt/.bat/.cmd/.script/.js/.py/.ps1/.vbs/.wsf/.hta -> SCRIPT
+   no known extension + MZ -> PE
+
+Recommended PE test: create the signature through POST /api/signatures JSON, not /file, so fileType=PE and offsets are explicit.

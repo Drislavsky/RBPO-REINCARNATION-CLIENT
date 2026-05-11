@@ -1,0 +1,4 @@
+Client-only fix:
+- BMTXService now detects .bat, .cmd, .vbs, .wsf, .hta and .script files as SCRIPT objects.
+- Unknown files are no longer treated as PE. PE is detected by MZ header.
+- This fixes SCRIPT signatures not triggering for .bat/.cmd while preserving the ObjectType mismatch test.

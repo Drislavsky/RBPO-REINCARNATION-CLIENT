@@ -1,0 +1,12 @@
+Final PE/script detection fix.
+
+Expected behavior:
+- PE server record + .exe/.dll/.sys/.scr target => PE scan path, can be INFECTED.
+- PE server record + .txt/.bat/.cmd/.script/.js/.py/.ps1/.vbs/.wsf/.hta target => SCRIPT scan path, must stay CLEAN.
+- SCRIPT server record + .txt/.bat/.cmd/.script/.js/.py/.ps1/.vbs/.wsf/.hta target => SCRIPT scan path, can be INFECTED.
+
+Robustness changes in src/service.cpp:
+- PE object type parsing accepts PE, EXE, DLL, SYS, numeric 1, Win32, portable-executable and common PE MIME strings.
+- SCRIPT object type parsing accepts SCRIPT, TXT, JS, PY, PS1, BAT, CMD, VBS, WSF, HTA, numeric 2 and common text/script MIME strings.
+- If server returns application/octet-stream for uploaded PE signatures, threat names containing PE/EXE or first bytes MZ are treated as PE; otherwise fallback is SCRIPT, not wildcard.
+- Scanner supports both server hash formats: SHA-256(remainder) and SHA-256(whole signature), and both length meanings: remainder length and full signature length.

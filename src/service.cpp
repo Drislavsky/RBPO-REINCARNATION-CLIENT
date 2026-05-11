@@ -5,11 +5,19 @@
 #include <strsafe.h>
 #include <sddl.h>
 #include <winhttp.h>
+#include <shlwapi.h>
+
 
 #include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
+#include <array>
+#include <fstream>
+#include <cstdint>
+#include <sstream>
+#include <wincrypt.h>
+#include <bcrypt.h>
 
 #include "bmtx_rpc.h"
 
@@ -27,6 +35,7 @@ constexpr wchar_t kAuthRefreshEndpoint[] = L"/api/auth/refresh";
 constexpr wchar_t kAuthLogoutEndpoint[] = L"/api/auth/logout";
 constexpr wchar_t kLicenseActivateEndpoint[] = L"/api/license/activate";
 constexpr wchar_t kLicenseVerifyPathPrefix[] = L"/api/license/verify?mac=";
+constexpr wchar_t kAvDatabaseEndpoint[] = L"/api/signatures";
 
 SERVICE_STATUS_HANDLE g_status_handle = nullptr;
 SERVICE_STATUS g_status{};
@@ -34,6 +43,7 @@ HANDLE g_stop_event = nullptr;
 HANDLE g_refresh_thread = nullptr;
 CRITICAL_SECTION g_process_lock{};
 CRITICAL_SECTION g_state_lock{};
+CRITICAL_SECTION g_av_lock{};
 std::map<DWORD, PROCESS_INFORMATION> g_clients;
 
 struct ServiceState {
@@ -52,6 +62,625 @@ struct ServiceState {
 };
 
 ServiceState g_state;
+
+enum class AvObjectType : unsigned long long {
+    Any = 0,
+    PeFile = 1,
+    Script = 2,
+};
+
+struct AvRecord {
+    unsigned long long objectSignaturePrefix = 0;
+    unsigned long objectSignatureLength = 0;
+    unsigned long serverLengthField = 0;
+    std::vector<unsigned char> objectSignature;
+    std::vector<unsigned char> firstBytes;
+    unsigned long long offsetBegin = 0;
+    unsigned long long offsetEnd = 0;
+    AvObjectType objectType = AvObjectType::PeFile;
+    std::vector<unsigned char> avRecordSignature;
+    std::wstring threatName;
+};
+
+struct AvDatabase {
+    bool loaded = false;
+    FILETIME releaseDate{};
+    std::map<unsigned long long, std::vector<AvRecord>> records;
+};
+
+AvDatabase g_av_database;
+
+struct HttpResponse {
+    DWORD status = 0;
+    std::wstring body;
+    DWORD error = ERROR_SUCCESS;
+};
+
+std::wstring ExtractJsonString(const std::wstring& json, const std::wstring& key);
+bool ExtractJsonBool(const std::wstring& json, const std::wstring& key, bool default_value);
+DWORD ExtractJsonDword(const std::wstring& json, const std::wstring& key, DWORD default_value);
+HttpResponse HttpsRequest(const wchar_t* method, const std::wstring& path, const std::string& body, const std::wstring& bearer_token);
+DWORD RefreshTokensInternal();
+void SetMessageLocked(const std::wstring& message);
+bool IsFileTimeExpiredOrNear(const FILETIME& ft, DWORD safety_seconds);
+
+unsigned long long PrefixFromBytes(const unsigned char* data) {
+    unsigned long long value = 0;
+    for (int i = 0; i < 8; ++i) {
+        value |= static_cast<unsigned long long>(data[i]) << (i * 8);
+    }
+    return value;
+}
+
+std::vector<unsigned char> Sha256Bytes(const unsigned char* data, size_t size) {
+    std::vector<unsigned char> result(32);
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    DWORD cb_data = 0;
+    DWORD object_length = 0;
+    DWORD hash_length = 0;
+    std::vector<unsigned char> hash_object;
+
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
+        return {};
+    }
+    if (BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_length), sizeof(object_length), &cb_data, 0) != 0 ||
+        BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_length), sizeof(hash_length), &cb_data, 0) != 0 ||
+        hash_length == 0) {
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        return {};
+    }
+
+    hash_object.assign(object_length, 0);
+    result.assign(hash_length, 0);
+    if (BCryptCreateHash(algorithm, &hash, hash_object.data(), object_length, nullptr, 0, 0) != 0 ||
+        BCryptHashData(hash, const_cast<PUCHAR>(data), static_cast<ULONG>(size), 0) != 0 ||
+        BCryptFinishHash(hash, result.data(), hash_length, 0) != 0) {
+        if (hash != nullptr) {
+            BCryptDestroyHash(hash);
+        }
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+        return {};
+    }
+
+    BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return result;
+}
+
+std::vector<unsigned char> HashRecordFields(const AvRecord& record) {
+    std::vector<unsigned char> raw;
+    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.objectSignaturePrefix), reinterpret_cast<const unsigned char*>(&record.objectSignaturePrefix) + sizeof(record.objectSignaturePrefix));
+    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.objectSignatureLength), reinterpret_cast<const unsigned char*>(&record.objectSignatureLength) + sizeof(record.objectSignatureLength));
+    raw.insert(raw.end(), record.objectSignature.begin(), record.objectSignature.end());
+    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.offsetBegin), reinterpret_cast<const unsigned char*>(&record.offsetBegin) + sizeof(record.offsetBegin));
+    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.offsetEnd), reinterpret_cast<const unsigned char*>(&record.offsetEnd) + sizeof(record.offsetEnd));
+    const unsigned long long objectType = static_cast<unsigned long long>(record.objectType);
+    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&objectType), reinterpret_cast<const unsigned char*>(&objectType) + sizeof(objectType));
+    return Sha256Bytes(raw.data(), raw.size());
+}
+
+std::vector<unsigned char> BytesFromHex(const std::wstring& hex) {
+    std::vector<unsigned char> bytes;
+    if (hex.size() % 2 != 0) {
+        return bytes;
+    }
+    bytes.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        wchar_t pair[3] = { hex[i], hex[i + 1], L'\0' };
+        wchar_t* end = nullptr;
+        const unsigned long value = wcstoul(pair, &end, 16);
+        if (end == nullptr || *end != L'\0' || value > 0xFF) {
+            bytes.clear();
+            return bytes;
+        }
+        bytes.push_back(static_cast<unsigned char>(value));
+    }
+    return bytes;
+}
+
+std::wstring BytesToHex(const std::vector<unsigned char>& bytes) {
+    static constexpr wchar_t hex[] = L"0123456789ABCDEF";
+    std::wstring result;
+    result.reserve(bytes.size() * 2);
+    for (unsigned char byte : bytes) {
+        result.push_back(hex[byte >> 4]);
+        result.push_back(hex[byte & 0x0F]);
+    }
+    return result;
+}
+
+std::wstring LowerCopy(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+    return value;
+}
+
+bool ContainsToken(const std::wstring& value, const wchar_t* token) {
+    return value.find(token) != std::wstring::npos;
+}
+
+bool HasPeExtensionInString(const std::wstring& value) {
+    const std::wstring lowered = LowerCopy(value);
+    return lowered.size() >= 4 &&
+        (lowered.rfind(L".exe") == lowered.size() - 4 ||
+         lowered.rfind(L".dll") == lowered.size() - 4 ||
+         lowered.rfind(L".sys") == lowered.size() - 4 ||
+         lowered.rfind(L".scr") == lowered.size() - 4);
+}
+
+bool HasScriptExtensionInString(const std::wstring& value) {
+    const std::wstring lowered = LowerCopy(value);
+    const wchar_t* exts[] = { L".js", L".py", L".ps1", L".bat", L".cmd", L".vbs", L".wsf", L".hta", L".script", L".txt" };
+    for (const wchar_t* ext : exts) {
+        const size_t len = wcslen(ext);
+        if (lowered.size() >= len && lowered.rfind(ext) == lowered.size() - len) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LooksLikePeMime(const std::wstring& lowered) {
+    return ContainsToken(lowered, L"portable-executable") ||
+        ContainsToken(lowered, L"portable executable") ||
+        ContainsToken(lowered, L"msdownload") ||
+        ContainsToken(lowered, L"x-msdownload") ||
+        ContainsToken(lowered, L"x-dosexec") ||
+        ContainsToken(lowered, L"x-msdos-program") ||
+        ContainsToken(lowered, L"application/vnd.microsoft.portable-executable");
+}
+
+bool LooksLikeScriptMime(const std::wstring& lowered) {
+    return ContainsToken(lowered, L"text/") ||
+        ContainsToken(lowered, L"javascript") ||
+        ContainsToken(lowered, L"powershell") ||
+        ContainsToken(lowered, L"batch") ||
+        ContainsToken(lowered, L"python");
+}
+
+AvObjectType ParseObjectType(const std::wstring& value,
+                             const std::vector<unsigned char>& firstBytes,
+                             const std::wstring& threatName,
+                             const std::wstring& originalFileName,
+                             const std::wstring& fileContentType) {
+    // Convert the server record type to the engine ObjectType.
+    // Important: /api/signatures/file in the provided server ignores form-data
+    // fields fileType/offsetStart/offsetEnd; it stores MultipartFile contentType
+    // in fileType and stores originalFileName separately. Therefore we must also
+    // inspect originalFileName/fileContentType, otherwise PE records uploaded as
+    // files can accidentally become SCRIPT and .exe scans return CLEAN.
+    const std::wstring lowered = LowerCopy(value);
+    const std::wstring contentLowered = LowerCopy(fileContentType);
+    const std::wstring threatLowered = LowerCopy(threatName);
+
+    // Explicit admin-created JSON values have the highest priority.
+    if (lowered == L"1" || lowered == L"pe" || lowered == L"pefile" ||
+        lowered == L"pe_file" || lowered == L"pe file" ||
+        lowered == L"portable_executable" || lowered == L"portable executable" ||
+        lowered == L"exe" || lowered == L"dll" || lowered == L"sys" ||
+        lowered == L"win32" || lowered == L"windows_executable") {
+        return AvObjectType::PeFile;
+    }
+    if (lowered == L"2" || lowered == L"script" || lowered == L"scripts" ||
+        lowered == L"text" || lowered == L"txt" || lowered == L"js" ||
+        lowered == L"javascript" || lowered == L"py" || lowered == L"python" ||
+        lowered == L"ps1" || lowered == L"powershell" || lowered == L"bat" ||
+        lowered == L"batch" || lowered == L"cmd" || lowered == L"vbs" ||
+        lowered == L"wsf" || lowered == L"hta" || lowered == L"scriptfile") {
+        return AvObjectType::Script;
+    }
+
+    // MIME values from MultipartFile contentType.
+    if (LooksLikePeMime(lowered) || LooksLikePeMime(contentLowered)) {
+        return AvObjectType::PeFile;
+    }
+    if (LooksLikeScriptMime(lowered) || LooksLikeScriptMime(contentLowered)) {
+        return AvObjectType::Script;
+    }
+
+    // Original filename from /api/signatures/file.
+    if (HasScriptExtensionInString(originalFileName)) {
+        return AvObjectType::Script;
+    }
+    if (HasPeExtensionInString(originalFileName)) {
+        return AvObjectType::PeFile;
+    }
+
+    // Last-resort lab compatibility: octet-stream .exe-like signatures beginning
+    // with MZ are PE. This affects the DB record only, not scanned .txt files.
+    if ((lowered.empty() || lowered == L"application/octet-stream" || lowered == L"octet-stream" ||
+         contentLowered.empty() || contentLowered == L"application/octet-stream" || contentLowered == L"octet-stream") &&
+        firstBytes.size() >= 2 && firstBytes[0] == 'M' && firstBytes[1] == 'Z') {
+        return AvObjectType::PeFile;
+    }
+
+    if (ContainsToken(threatLowered, L"pe") || ContainsToken(threatLowered, L"exe")) {
+        return AvObjectType::PeFile;
+    }
+
+    return AvObjectType::Script;
+}
+
+bool ParseServerSignatureObject(const std::wstring& object, AvRecord* record) {
+    if (record == nullptr) {
+        return false;
+    }
+    const std::wstring threatName = !ExtractJsonString(object, L"threatName").empty() ? ExtractJsonString(object, L"threatName") : ExtractJsonString(object, L"name");
+    const std::wstring firstBytesHex = !ExtractJsonString(object, L"firstBytesHex").empty() ? ExtractJsonString(object, L"firstBytesHex") : ExtractJsonString(object, L"signaturePrefixHex");
+    std::wstring objectSignatureHex = ExtractJsonString(object, L"remainderHashHex");
+    if (objectSignatureHex.empty()) objectSignatureHex = ExtractJsonString(object, L"objectSignatureHex");
+    if (objectSignatureHex.empty()) objectSignatureHex = ExtractJsonString(object, L"signatureHashHex");
+    if (objectSignatureHex.empty()) objectSignatureHex = ExtractJsonString(object, L"hashHex");
+    DWORD signatureLength = ExtractJsonDword(object, L"remainderLength", 0);
+    if (signatureLength == 0) signatureLength = ExtractJsonDword(object, L"objectSignatureLength", 0);
+    if (signatureLength == 0) signatureLength = ExtractJsonDword(object, L"signatureLength", 0);
+    std::wstring fileType = ExtractJsonString(object, L"fileType");
+    if (fileType.empty()) fileType = ExtractJsonString(object, L"objectType");
+    if (fileType.empty()) fileType = ExtractJsonString(object, L"type");
+    if (fileType.empty()) fileType = ExtractJsonString(object, L"objectFileType");
+    const std::wstring originalFileName = ExtractJsonString(object, L"originalFileName");
+    const std::wstring fileContentType = ExtractJsonString(object, L"fileContentType");
+    DWORD offsetStart = ExtractJsonDword(object, L"offsetStart", 0);
+    if (offsetStart == 0) offsetStart = ExtractJsonDword(object, L"offsetBegin", 0);
+    DWORD offsetEnd = ExtractJsonDword(object, L"offsetEnd", 0);
+    const std::wstring status = ExtractJsonString(object, L"status");
+    const std::wstring recordSignatureBase64 = ExtractJsonString(object, L"digitalSignatureBase64");
+
+    const std::vector<unsigned char> firstBytes = BytesFromHex(firstBytesHex);
+    const std::vector<unsigned char> objectSignature = BytesFromHex(objectSignatureHex);
+    if (firstBytes.size() < 8 || objectSignature.empty() || offsetEnd < offsetStart) {
+        return false;
+    }
+    if (!status.empty() && _wcsicmp(status.c_str(), L"ACTUAL") != 0) {
+        return false;
+    }
+
+    record->firstBytes = firstBytes;
+    record->objectSignaturePrefix = PrefixFromBytes(firstBytes.data());
+    // Server field remainderLength is the number of bytes AFTER firstBytesHex.
+    // The assignment's ObjectSignatureLength is the whole signature length including prefix.
+    record->serverLengthField = static_cast<unsigned long>(signatureLength);
+    record->objectSignatureLength = static_cast<unsigned long>(firstBytes.size() + signatureLength);
+    // Server field remainderHashHex is SHA-256 of the remainder only, not SHA-256 of the whole signature.
+    record->objectSignature = objectSignature;
+    record->offsetBegin = offsetStart;
+    record->offsetEnd = offsetEnd;
+    record->objectType = ParseObjectType(fileType, firstBytes, threatName, originalFileName, fileContentType);
+    record->threatName = threatName.empty() ? L"Server.Signature" : threatName;
+
+    if (!recordSignatureBase64.empty()) {
+        // Base64 is ASCII text. Convert explicitly from wchar_t to bytes to avoid
+        // MSVC C4244 warnings and keep the AV-record signature field deterministic.
+        std::vector<unsigned char> sig;
+        sig.reserve(recordSignatureBase64.size());
+        for (wchar_t ch : recordSignatureBase64) {
+            if (ch >= 0 && ch <= 0x7F) {
+                sig.push_back(static_cast<unsigned char>(ch));
+            }
+        }
+        record->avRecordSignature = sig;
+    } else {
+        record->avRecordSignature = HashRecordFields(*record);
+    }
+    return true;
+}
+
+std::vector<std::wstring> ExtractJsonObjectsFromArray(const std::wstring& json) {
+    std::vector<std::wstring> objects;
+    bool in_string = false;
+    bool escaped = false;
+    int depth = 0;
+    size_t object_start = std::wstring::npos;
+    for (size_t i = 0; i < json.size(); ++i) {
+        const wchar_t ch = json[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (ch == L'\\' && in_string) {
+            escaped = true;
+            continue;
+        }
+        if (ch == L'\"') {
+            in_string = !in_string;
+            continue;
+        }
+        if (in_string) {
+            continue;
+        }
+        if (ch == L'{') {
+            if (depth == 0) {
+                object_start = i;
+            }
+            ++depth;
+        } else if (ch == L'}') {
+            --depth;
+            if (depth == 0 && object_start != std::wstring::npos) {
+                objects.push_back(json.substr(object_start, i - object_start + 1));
+                object_start = std::wstring::npos;
+            }
+        }
+    }
+    return objects;
+}
+
+DWORD LoadAntivirusDatabaseFromServer() {
+    std::wstring access_token;
+    EnterCriticalSection(&g_state_lock);
+    access_token = g_state.access_token;
+    LeaveCriticalSection(&g_state_lock);
+    if (access_token.empty()) {
+        return ERROR_NOT_LOGGED_ON;
+    }
+
+    HttpResponse response = HttpsRequest(L"GET", kAvDatabaseEndpoint, {}, access_token);
+    if (response.error != ERROR_SUCCESS) {
+        return response.error;
+    }
+    if (response.status == 401 || response.status == 403) {
+        const DWORD refreshed = RefreshTokensInternal();
+        if (refreshed == ERROR_SUCCESS) {
+            EnterCriticalSection(&g_state_lock);
+            access_token = g_state.access_token;
+            LeaveCriticalSection(&g_state_lock);
+            response = HttpsRequest(L"GET", kAvDatabaseEndpoint, {}, access_token);
+        }
+    }
+    if (response.error != ERROR_SUCCESS) {
+        return response.error;
+    }
+    if (response.status < 200 || response.status >= 300) {
+        EnterCriticalSection(&g_state_lock);
+        SetMessageLocked(L"Failed to download AV database from server");
+        LeaveCriticalSection(&g_state_lock);
+        return ERROR_INVALID_DATA;
+    }
+
+    AvDatabase database{};
+    database.loaded = true;
+    GetSystemTimeAsFileTime(&database.releaseDate);
+
+    const std::vector<std::wstring> objects = ExtractJsonObjectsFromArray(response.body);
+    for (const std::wstring& object : objects) {
+        AvRecord record{};
+        if (ParseServerSignatureObject(object, &record)) {
+            database.records[record.objectSignaturePrefix].push_back(record);
+        }
+    }
+
+    EnterCriticalSection(&g_av_lock);
+    g_av_database = std::move(database);
+    LeaveCriticalSection(&g_av_lock);
+
+    EnterCriticalSection(&g_state_lock);
+    SetMessageLocked(L"AV database loaded from server");
+    LeaveCriticalSection(&g_state_lock);
+    return ERROR_SUCCESS;
+}
+
+void ClearAntivirusDatabase() {
+    EnterCriticalSection(&g_av_lock);
+    g_av_database = AvDatabase{};
+    LeaveCriticalSection(&g_av_lock);
+}
+
+bool IsAntivirusUnlocked() {
+    EnterCriticalSection(&g_state_lock);
+    const bool unlocked = !g_state.access_token.empty() &&
+        !g_state.refresh_token.empty() &&
+        !g_state.license_ticket_json.empty() &&
+        !ExtractJsonBool(g_state.license_ticket_json, L"blocked", false) &&
+        !IsFileTimeExpiredOrNear(g_state.license_expires_at, 0);
+    LeaveCriticalSection(&g_state_lock);
+    return unlocked;
+}
+
+DWORD EnsureAntivirusDatabaseLoaded() {
+    if (!IsAntivirusUnlocked()) {
+        return ERROR_ACCESS_DENIED;
+    }
+    EnterCriticalSection(&g_av_lock);
+    const bool loaded = g_av_database.loaded;
+    LeaveCriticalSection(&g_av_lock);
+    if (loaded) {
+        return ERROR_SUCCESS;
+    }
+    return LoadAntivirusDatabaseFromServer();
+}
+
+unsigned long CountAvRecordsLocked() {
+    unsigned long total = 0;
+    for (const auto& item : g_av_database.records) {
+        total += static_cast<unsigned long>(item.second.size());
+    }
+    return total;
+}
+
+AvObjectType DetectObjectType(const std::wstring& path, const std::vector<unsigned char>& data) {
+    // Extension has priority for scanned objects. This is what makes the negative
+    // test work: PE bytes inside .txt/.bat/.script are still SCRIPT, not PE.
+    if (HasScriptExtensionInString(path)) {
+        return AvObjectType::Script;
+    }
+    if (HasPeExtensionInString(path)) {
+        return AvObjectType::PeFile;
+    }
+
+    // Files without a known extension can still be PE if they begin with MZ.
+    if (data.size() >= 2 && data[0] == 'M' && data[1] == 'Z') {
+        return AvObjectType::PeFile;
+    }
+
+    return AvObjectType::Any;
+}
+
+bool ReadWholeFile(const std::wstring& path, std::vector<unsigned char>* data) {
+    if (data == nullptr) {
+        return false;
+    }
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < 0 || size.QuadPart > 128LL * 1024LL * 1024LL) {
+        CloseHandle(file);
+        return false;
+    }
+    data->assign(static_cast<size_t>(size.QuadPart), 0);
+    DWORD read = 0;
+    const BOOL ok = data->empty() || ReadFile(file, data->data(), static_cast<DWORD>(data->size()), &read, nullptr);
+    CloseHandle(file);
+    if (!ok || read != data->size()) {
+        data->clear();
+        return false;
+    }
+    return true;
+}
+
+bool ScanByteStream(const std::wstring& path, const std::vector<unsigned char>& data, std::wstring* threatName) {
+    if (data.size() < 8) {
+        return false;
+    }
+    const AvObjectType type = DetectObjectType(path, data);
+    std::map<unsigned long long, std::vector<AvRecord>> records;
+    EnterCriticalSection(&g_av_lock);
+    records = g_av_database.records;
+    LeaveCriticalSection(&g_av_lock);
+
+    for (size_t pos = 0; pos + 8 <= data.size(); ++pos) {
+        const unsigned long long prefix = PrefixFromBytes(data.data() + pos);
+        const auto found = records.find(prefix);
+        if (found == records.end()) {
+            continue;
+        }
+        for (const AvRecord& record : found->second) {
+            // Type check must be strict for PE and SCRIPT records. Any is allowed only
+            // for old server records that genuinely did not contain object type info.
+            if (record.objectType != AvObjectType::Any && record.objectType != type) {
+                continue;
+            }
+            if (pos < record.offsetBegin || pos > record.offsetEnd) {
+                continue;
+            }
+            if (pos + record.firstBytes.size() > data.size()) {
+                continue;
+            }
+            if (!std::equal(record.firstBytes.begin(), record.firstBytes.end(), data.begin() + pos)) {
+                continue;
+            }
+
+            const size_t firstLen = record.firstBytes.size();
+            const size_t rawLen = static_cast<size_t>(record.serverLengthField);
+            std::vector<size_t> fullLengths;
+
+            // Server variants seen in the project:
+            // 1) remainderLength = bytes after firstBytesHex; remainderHashHex = SHA256(remainder)
+            if (rawLen > 0) {
+                fullLengths.push_back(firstLen + rawLen);
+            }
+            // 2) objectSignatureLength/signatureLength = whole signature length including prefix
+            if (rawLen >= firstLen) {
+                fullLengths.push_back(rawLen);
+            }
+            // 3) previously normalized engine length
+            if (record.objectSignatureLength >= firstLen) {
+                fullLengths.push_back(static_cast<size_t>(record.objectSignatureLength));
+            }
+
+            std::sort(fullLengths.begin(), fullLengths.end());
+            fullLengths.erase(std::unique(fullLengths.begin(), fullLengths.end()), fullLengths.end());
+
+            for (size_t fullLen : fullLengths) {
+                if (fullLen < firstLen || pos + fullLen > data.size()) {
+                    continue;
+                }
+                const size_t remainderOffset = pos + firstLen;
+                const size_t remainderLength = fullLen - firstLen;
+
+                // Preferred current server format: hash only the remainder.
+                const auto remainderHash = Sha256Bytes(data.data() + remainderOffset, remainderLength);
+                if (remainderHash == record.objectSignature) {
+                    if (threatName != nullptr) {
+                        *threatName = record.threatName;
+                    }
+                    return true;
+                }
+
+                // Compatibility with older/alternate server format: hash whole signature.
+                const auto wholeHash = Sha256Bytes(data.data() + pos, fullLen);
+                if (wholeHash == record.objectSignature) {
+                    if (threatName != nullptr) {
+                        *threatName = record.threatName;
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+DWORD ScanSingleFile(const std::wstring& path, BMTX_SCAN_RESULT* result) {
+    if (result == nullptr) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    ZeroMemory(result, sizeof(*result));
+    std::vector<unsigned char> data;
+    if (!ReadWholeFile(path, &data)) {
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"File cannot be opened or is larger than 128 MB");
+        return GetLastError() == ERROR_SUCCESS ? ERROR_OPEN_FAILED : GetLastError();
+    }
+    result->scannedObjects = 1;
+    std::wstring threat;
+    if (ScanByteStream(path, data, &threat)) {
+        result->infectedObjects = 1;
+        StringCchCopyW(result->firstThreatPath, ARRAYSIZE(result->firstThreatPath), path.c_str());
+        StringCchCopyW(result->threatName, ARRAYSIZE(result->threatName), threat.c_str());
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"Malicious object detected");
+    } else {
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"No threats found");
+    }
+    return ERROR_SUCCESS;
+}
+
+void ScanDirectoryRecursive(const std::wstring& directory, BMTX_SCAN_RESULT* aggregate) {
+    std::wstring mask = directory;
+    if (!mask.empty() && mask.back() != L'\\' && mask.back() != L'/') {
+        mask += L"\\";
+    }
+    mask += L"*";
+    WIN32_FIND_DATAW fd{};
+    HANDLE find = FindFirstFileW(mask.c_str(), &fd);
+    if (find == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) {
+            continue;
+        }
+        std::wstring path = directory;
+        if (!path.empty() && path.back() != L'\\' && path.back() != L'/') {
+            path += L"\\";
+        }
+        path += fd.cFileName;
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            ScanDirectoryRecursive(path, aggregate);
+            continue;
+        }
+        BMTX_SCAN_RESULT one{};
+        if (ScanSingleFile(path, &one) == ERROR_SUCCESS) {
+            aggregate->scannedObjects += one.scannedObjects;
+            aggregate->infectedObjects += one.infectedObjects;
+            if (one.infectedObjects > 0 && aggregate->firstThreatPath[0] == L'\0') {
+                StringCchCopyW(aggregate->firstThreatPath, ARRAYSIZE(aggregate->firstThreatPath), one.firstThreatPath);
+                StringCchCopyW(aggregate->threatName, ARRAYSIZE(aggregate->threatName), one.threatName);
+            }
+        }
+    } while (FindNextFileW(find, &fd));
+    FindClose(find);
+}
 
 void LogDebug(const wchar_t* message) {
     OutputDebugStringW(message);
@@ -395,13 +1024,7 @@ std::wstring ExtractJsonObject(const std::wstring& json, const std::wstring& key
     return {};
 }
 
-struct HttpResponse {
-    DWORD status = 0;
-    std::wstring body;
-    DWORD error = ERROR_SUCCESS;
-};
-
-HttpResponse HttpsRequest(const wchar_t* method, const std::wstring& path, const std::string& body, const std::wstring& bearer_token = L"") {
+HttpResponse HttpsRequest(const wchar_t* method, const std::wstring& path, const std::string& body, const std::wstring& bearer_token) {
     HttpResponse result{};
 
     HINTERNET session = WinHttpOpen(L"BMTXService/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -602,7 +1225,7 @@ DWORD RefreshTokensInternal() {
     }
 
     const std::string body = std::string("{\"refreshToken\":\"") + JsonEscapeUtf8(refresh_token) + "\"}";
-    const HttpResponse response = HttpsRequest(L"POST", kAuthRefreshEndpoint, body);
+    const HttpResponse response = HttpsRequest(L"POST", kAuthRefreshEndpoint, body, L"");
     if (response.error != ERROR_SUCCESS) {
         return response.error;
     }
@@ -674,7 +1297,7 @@ DWORD RefreshLicenseInternal() {
 
 DWORD LoginInternal(const std::wstring& username, const std::wstring& password) {
     const std::string body = std::string("{\"username\":\"") + JsonEscapeUtf8(username) + "\",\"password\":\"" + JsonEscapeUtf8(password) + "\"}";
-    const HttpResponse response = HttpsRequest(L"POST", kAuthLoginEndpoint, body);
+    const HttpResponse response = HttpsRequest(L"POST", kAuthLoginEndpoint, body, L"");
     if (response.error != ERROR_SUCCESS) {
         return response.error;
     }
@@ -705,13 +1328,14 @@ DWORD LogoutInternal() {
 
     if (!refresh_token.empty()) {
         const std::string body = std::string("{\"refreshToken\":\"") + JsonEscapeUtf8(refresh_token) + "\"}";
-        HttpsRequest(L"POST", kAuthLogoutEndpoint, body);
+        HttpsRequest(L"POST", kAuthLogoutEndpoint, body, L"");
     }
 
     EnterCriticalSection(&g_state_lock);
     ClearAuthLocked();
     SetMessageLocked(L"Logged out");
     LeaveCriticalSection(&g_state_lock);
+    ClearAntivirusDatabase();
     return ERROR_SUCCESS;
 }
 
@@ -766,7 +1390,7 @@ DWORD ActivateProductInternal(const std::wstring& activation_code) {
         }
     }
 
-    return ERROR_SUCCESS;
+    return LoadAntivirusDatabaseFromServer();
 }
 
 DWORD WINAPI RefreshWorkerThread(LPVOID) {
@@ -986,10 +1610,12 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
 
     InitializeCriticalSection(&g_process_lock);
     InitializeCriticalSection(&g_state_lock);
+    InitializeCriticalSection(&g_av_lock);
     g_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (g_stop_event == nullptr) {
         SetServiceState(SERVICE_STOPPED, GetLastError());
-        DeleteCriticalSection(&g_state_lock);
+        DeleteCriticalSection(&g_av_lock);
+    DeleteCriticalSection(&g_state_lock);
         DeleteCriticalSection(&g_process_lock);
         return;
     }
@@ -999,7 +1625,8 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
         CloseHandle(g_stop_event);
         g_stop_event = nullptr;
         SetServiceState(SERVICE_STOPPED, error);
-        DeleteCriticalSection(&g_state_lock);
+        DeleteCriticalSection(&g_av_lock);
+    DeleteCriticalSection(&g_state_lock);
         DeleteCriticalSection(&g_process_lock);
         return;
     }
@@ -1023,6 +1650,7 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
 
     CloseHandle(g_stop_event);
     g_stop_event = nullptr;
+    DeleteCriticalSection(&g_av_lock);
     DeleteCriticalSection(&g_state_lock);
     DeleteCriticalSection(&g_process_lock);
     SetServiceState(SERVICE_STOPPED);
@@ -1186,11 +1814,84 @@ extern "C" unsigned long BmtxRefreshLicenseState(handle_t, BMTX_CLIENT_STATE* st
     LeaveCriticalSection(&g_state_lock);
     if (has_license) {
         result = RefreshLicenseInternal();
+        if (result == ERROR_SUCCESS) {
+            result = LoadAntivirusDatabaseFromServer();
+        }
     } else {
         result = ERROR_LICENSE_QUOTA_EXCEEDED;
     }
     FillClientState(state);
     return result;
+}
+
+extern "C" unsigned long BmtxGetAvDbInfo(handle_t, BMTX_AV_DB_INFO* info) {
+    if (info == nullptr) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    ZeroMemory(info, sizeof(*info));
+
+    // Important: this RPC method is also the manual "reload DB from server" action.
+    // If signatures are uploaded in Postman after activation, clicking "Инфо баз"
+    // must download the fresh server state instead of returning the old in-memory cache.
+    DWORD load_result = ERROR_SUCCESS;
+    if (!IsAntivirusUnlocked()) {
+        load_result = ERROR_ACCESS_DENIED;
+    } else {
+        load_result = LoadAntivirusDatabaseFromServer();
+    }
+
+    EnterCriticalSection(&g_av_lock);
+    info->releaseDateUnix = FileTimeToUnixSeconds(g_av_database.releaseDate);
+    info->recordCount = CountAvRecordsLocked();
+    LeaveCriticalSection(&g_av_lock);
+    StringCchCopyW(info->engineName, ARRAYSIZE(info->engineName), L"BMTX Server AV Engine");
+    if (load_result == ERROR_SUCCESS) {
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database was reloaded from server into RAM std::map");
+    } else {
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"AV database was not loaded from server; authenticate, activate license, and check /api/signatures");
+    }
+    return load_result;
+}
+
+extern "C" unsigned long BmtxScanFile(handle_t, wchar_t* path, BMTX_SCAN_RESULT* result) {
+    if (path == nullptr || result == nullptr) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    DWORD load_result = EnsureAntivirusDatabaseLoaded();
+    if (load_result == ERROR_SUCCESS) {
+        // Refresh before a scan so newly uploaded Postman signatures are used without restarting the service.
+        load_result = LoadAntivirusDatabaseFromServer();
+    }
+    if (load_result != ERROR_SUCCESS) {
+        ZeroMemory(result, sizeof(*result));
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from server");
+        return load_result;
+    }
+    return ScanSingleFile(path, result);
+}
+
+extern "C" unsigned long BmtxScanDirectory(handle_t, wchar_t* path, BMTX_SCAN_RESULT* result) {
+    if (path == nullptr || result == nullptr) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    DWORD load_result = EnsureAntivirusDatabaseLoaded();
+    if (load_result == ERROR_SUCCESS) {
+        // Refresh before a scan so newly uploaded Postman signatures are used without restarting the service.
+        load_result = LoadAntivirusDatabaseFromServer();
+    }
+    if (load_result != ERROR_SUCCESS) {
+        ZeroMemory(result, sizeof(*result));
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from server");
+        return load_result;
+    }
+    ZeroMemory(result, sizeof(*result));
+    ScanDirectoryRecursive(path, result);
+    if (result->infectedObjects > 0) {
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"Threats found in directory");
+    } else {
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"No threats found in directory");
+    }
+    return ERROR_SUCCESS;
 }
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR command_line, int) {

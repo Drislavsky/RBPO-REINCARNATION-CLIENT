@@ -61,6 +61,8 @@ target_link_libraries(BMTX PRIVATE
     gdi32
     advapi32
     rpcrt4
+    comdlg32
+    ole32
 )
 
 add_executable(BMTXService WIN32
@@ -87,6 +89,8 @@ target_link_libraries(BMTXService PRIVATE
     wtsapi32
     userenv
     winhttp
+    shlwapi
+    bcrypt
 )
 
 if(MSVC)
