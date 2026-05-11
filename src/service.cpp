@@ -561,6 +561,12 @@ bool ScanByteStream(const std::wstring& path, const std::vector<unsigned char>& 
             if (record.objectType != AvObjectType::Any && record.objectType != type) {
                 continue;
             }
+            // OffsetBegin/OffsetEnd describe the allowed interval for this signature.
+            // First, reject candidates whose START position is outside the interval.
+            // A second check below may also require the whole signature to fit into
+            // the interval when the server stores OffsetEnd as the end of the
+            // signature sample. This prevents a signature uploaded with interval
+            // [0..signature_length-1] from also matching later in a file.
             if (pos < record.offsetBegin || pos > record.offsetEnd) {
                 continue;
             }
@@ -596,6 +602,24 @@ bool ScanByteStream(const std::wstring& path, const std::vector<unsigned char>& 
                 if (fullLen < firstLen || pos + fullLen > data.size()) {
                     continue;
                 }
+
+                // If the configured interval is at least as large as the complete
+                // signature, treat OffsetEnd as an end boundary for the whole
+                // signature. This keeps normal tests with [0..10] working as a
+                // start-position interval when the signature is longer than the
+                // interval, but also fixes the /api/signatures/file case where the
+                // server may save [0..signature_length-1] and would otherwise allow
+                // the same signature to match at offset 20, 40, etc.
+                const unsigned long long intervalSize = record.offsetEnd >= record.offsetBegin
+                    ? (record.offsetEnd - record.offsetBegin + 1ULL)
+                    : 0ULL;
+                if (intervalSize >= static_cast<unsigned long long>(fullLen)) {
+                    const unsigned long long signatureEnd = static_cast<unsigned long long>(pos + fullLen - 1);
+                    if (signatureEnd > record.offsetEnd) {
+                        continue;
+                    }
+                }
+
                 const size_t remainderOffset = pos + firstLen;
                 const size_t remainderLength = fullLen - firstLen;
 
