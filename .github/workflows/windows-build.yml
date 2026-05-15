@@ -14,6 +14,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Install NSIS
         run: choco install nsis -y --no-progress
 
@@ -25,6 +30,18 @@ jobs:
 
       - name: Build installer
         run: cmake --build build --config Release --target BMTXInstaller
+
+      - name: Upload application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BMTX-windows-x64
+          path: |
+            build/Release/BMTX.exe
+            build/Release/BMTXService.exe
+            build/Release/avdb/bmtx_avdb.bin
+            build/Release/avdb/bmtx_avdb.bak
+            assets/bmtx.ico
+            assets/bmtx_icon_preview.png
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
