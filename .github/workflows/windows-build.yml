@@ -1,24 +1,20 @@
-name: Windows CMake Build and Installer
+name: Windows Build
 
 on:
   push:
+    branches: [ main, PRAC_5, PRAC_6 ]
   pull_request:
+    branches: [ main, PRAC_5, PRAC_6 ]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup MSVC developer command prompt
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
       - name: Install NSIS
-        shell: powershell
         run: choco install nsis -y --no-progress
 
       - name: Configure CMake
@@ -30,22 +26,8 @@ jobs:
       - name: Build installer
         run: cmake --build build --config Release --target BMTXInstaller
 
-      - name: Upload application artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: BMTX-windows-x64
-          path: |
-            build/Release/BMTX.exe
-            build/Release/BMTXService.exe
-            build/Release/avdb/bmtx_avdb.bin
-            build/Release/avdb/bmtx_avdb.bak
-            assets/bmtx.ico
-            assets/bmtx_icon_preview.png
-            README_AVDB_TASK.txt
-            README_INSTALLER_TASK.txt
-
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BMTX-windows-x64-installer
+          name: BMTXSetup
           path: build/installer/BMTXSetup.exe
