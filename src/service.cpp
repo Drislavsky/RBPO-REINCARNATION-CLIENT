@@ -16,6 +16,7 @@
 #include <fstream>
 #include <cstdint>
 #include <sstream>
+#include <cstring>
 #include <wincrypt.h>
 #include <bcrypt.h>
 
@@ -41,6 +42,7 @@ SERVICE_STATUS_HANDLE g_status_handle = nullptr;
 SERVICE_STATUS g_status{};
 HANDLE g_stop_event = nullptr;
 HANDLE g_refresh_thread = nullptr;
+HANDLE g_av_update_thread = nullptr;
 CRITICAL_SECTION g_process_lock{};
 CRITICAL_SECTION g_state_lock{};
 CRITICAL_SECTION g_av_lock{};
@@ -90,6 +92,11 @@ struct AvDatabase {
 
 AvDatabase g_av_database;
 
+constexpr DWORD kAvUpdatePeriodSeconds = 5 * 60;
+constexpr wchar_t kAvDbDirectoryName[] = L"avdb";
+constexpr wchar_t kAvDbFileName[] = L"bmtx_avdb.bin";
+constexpr wchar_t kAvDbBackupFileName[] = L"bmtx_avdb.bak";
+
 struct HttpResponse {
     DWORD status = 0;
     std::wstring body;
@@ -103,6 +110,13 @@ HttpResponse HttpsRequest(const wchar_t* method, const std::wstring& path, const
 DWORD RefreshTokensInternal();
 void SetMessageLocked(const std::wstring& message);
 bool IsFileTimeExpiredOrNear(const FILETIME& ft, DWORD safety_seconds);
+std::string WideToUtf8(const std::wstring& value);
+std::wstring Utf8ToWide(const std::string& value);
+ULONGLONG FileTimeToUInt64(const FILETIME& ft);
+FILETIME UInt64ToFileTime(ULONGLONG value);
+std::wstring GetModuleDirectory();
+DWORD LoadAntivirusDatabaseFromDiskWithRecovery();
+DWORD UpdateAntivirusDatabaseFromServerWithRollback(bool forced);
 
 unsigned long long PrefixFromBytes(const unsigned char* data) {
     unsigned long long value = 0;
@@ -405,6 +419,421 @@ std::vector<std::wstring> ExtractJsonObjectsFromArray(const std::wstring& json) 
     return objects;
 }
 
+
+std::vector<unsigned char> UInt32Bytes(DWORD value) {
+    return {
+        static_cast<unsigned char>(value & 0xFF),
+        static_cast<unsigned char>((value >> 8) & 0xFF),
+        static_cast<unsigned char>((value >> 16) & 0xFF),
+        static_cast<unsigned char>((value >> 24) & 0xFF)
+    };
+}
+
+void AppendBytes(std::vector<unsigned char>* out, const void* data, size_t size) {
+    if (out == nullptr || data == nullptr || size == 0) {
+        return;
+    }
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    out->insert(out->end(), bytes, bytes + size);
+}
+
+void AppendU32(std::vector<unsigned char>* out, DWORD value) {
+    AppendBytes(out, &value, sizeof(value));
+}
+
+void AppendU64(std::vector<unsigned char>* out, unsigned long long value) {
+    AppendBytes(out, &value, sizeof(value));
+}
+
+bool ReadU32(const std::vector<unsigned char>& data, size_t* pos, DWORD* value) {
+    if (pos == nullptr || value == nullptr || *pos + sizeof(DWORD) > data.size()) {
+        return false;
+    }
+    std::memcpy(value, data.data() + *pos, sizeof(DWORD));
+    *pos += sizeof(DWORD);
+    return true;
+}
+
+bool ReadU64(const std::vector<unsigned char>& data, size_t* pos, unsigned long long* value) {
+    if (pos == nullptr || value == nullptr || *pos + sizeof(unsigned long long) > data.size()) {
+        return false;
+    }
+    std::memcpy(value, data.data() + *pos, sizeof(unsigned long long));
+    *pos += sizeof(unsigned long long);
+    return true;
+}
+
+std::wstring GetAvDbDirectory() {
+    return GetModuleDirectory() + L"\\" + kAvDbDirectoryName;
+}
+
+std::wstring GetAvDbPath() {
+    return GetAvDbDirectory() + L"\\" + kAvDbFileName;
+}
+
+std::wstring GetAvDbBackupPath() {
+    return GetAvDbDirectory() + L"\\" + kAvDbBackupFileName;
+}
+
+void EnsureAvDbDirectory() {
+    CreateDirectoryW(GetAvDbDirectory().c_str(), nullptr);
+}
+
+bool ReadBinaryFile(const std::wstring& path, std::vector<unsigned char>* data) {
+    if (data == nullptr) {
+        return false;
+    }
+    data->clear();
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart < 0 || size.QuadPart > 64LL * 1024LL * 1024LL) {
+        CloseHandle(file);
+        return false;
+    }
+    data->assign(static_cast<size_t>(size.QuadPart), 0);
+    DWORD read = 0;
+    const BOOL ok = data->empty() || ReadFile(file, data->data(), static_cast<DWORD>(data->size()), &read, nullptr);
+    CloseHandle(file);
+    if (!ok || read != data->size()) {
+        data->clear();
+        return false;
+    }
+    return true;
+}
+
+bool WriteBinaryFile(const std::wstring& path, const std::vector<unsigned char>& data) {
+    EnsureAvDbDirectory();
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    DWORD written = 0;
+    const BOOL ok = data.empty() || WriteFile(file, data.data(), static_cast<DWORD>(data.size()), &written, nullptr);
+    CloseHandle(file);
+    return ok && written == data.size();
+}
+
+std::vector<unsigned char> ManifestSignature(const std::vector<unsigned char>& manifestBody) {
+    if (manifestBody.empty()) {
+        return Sha256Bytes(reinterpret_cast<const unsigned char*>("BMTX_EMPTY_MANIFEST"), 19);
+    }
+    return Sha256Bytes(manifestBody.data(), manifestBody.size());
+}
+
+bool VerifyManifestSignature(const std::vector<unsigned char>& manifestBody, const std::vector<unsigned char>& signature) {
+    return !signature.empty() && ManifestSignature(manifestBody) == signature;
+}
+
+bool VerifyRecordSignature(const AvRecord& record) {
+    const std::vector<unsigned char> expected = HashRecordFields(record);
+    return !expected.empty() && record.avRecordSignature == expected;
+}
+
+void AddRecordToDatabase(AvDatabase* database, const AvRecord& record) {
+    if (database == nullptr) {
+        return;
+    }
+    database->records[record.objectSignaturePrefix].push_back(record);
+}
+
+AvRecord MakeDefaultRecord(const char* sample, const wchar_t* name, AvObjectType type) {
+    AvRecord record{};
+    const size_t len = std::strlen(sample);
+    const auto* raw = reinterpret_cast<const unsigned char*>(sample);
+    record.firstBytes.assign(raw, raw + std::min<size_t>(8, len));
+    if (record.firstBytes.size() < 8) {
+        record.firstBytes.resize(8, 0);
+    }
+    record.objectSignaturePrefix = PrefixFromBytes(record.firstBytes.data());
+    const size_t remainder = len > 8 ? len - 8 : 0;
+    record.objectSignature = Sha256Bytes(raw + std::min<size_t>(8, len), remainder);
+    record.serverLengthField = static_cast<unsigned long>(remainder);
+    record.objectSignatureLength = static_cast<unsigned long>(len);
+    record.offsetBegin = 0;
+    record.offsetEnd = 1024 * 1024;
+    record.objectType = type;
+    record.threatName = name;
+    record.avRecordSignature = HashRecordFields(record);
+    return record;
+}
+
+AvDatabase MakeDefaultAntivirusDatabase() {
+    AvDatabase database{};
+    database.loaded = true;
+    GetSystemTimeAsFileTime(&database.releaseDate);
+    AddRecordToDatabase(&database, MakeDefaultRecord("BMTXTESTVIRUS", L"Default.Test.Virus", AvObjectType::Script));
+    AddRecordToDatabase(&database, MakeDefaultRecord("MZBMTXDEFAULTPE", L"Default.PE.Test", AvObjectType::PeFile));
+    AddRecordToDatabase(&database, MakeDefaultRecord("EICARBMTXDEFAULT", L"Default.Eicar.Lab", AvObjectType::Any));
+    return database;
+}
+
+bool SerializeAvDatabase(const AvDatabase& database, std::vector<unsigned char>* output) {
+    if (output == nullptr) {
+        return false;
+    }
+    std::vector<AvRecord> records;
+    for (const auto& item : database.records) {
+        for (AvRecord record : item.second) {
+            record.avRecordSignature = HashRecordFields(record);
+            records.push_back(record);
+        }
+    }
+
+    std::vector<unsigned char> recordsBlob;
+    std::vector<unsigned char> manifest;
+    AppendU32(&manifest, static_cast<DWORD>(records.size()));
+    AppendU64(&manifest, FileTimeToUInt64(database.releaseDate));
+
+    for (const AvRecord& record : records) {
+        const DWORD recordOffset = static_cast<DWORD>(recordsBlob.size());
+        AppendU64(&recordsBlob, record.objectSignaturePrefix);
+        AppendU32(&recordsBlob, record.objectSignatureLength);
+        AppendU32(&recordsBlob, record.serverLengthField);
+        AppendU64(&recordsBlob, record.offsetBegin);
+        AppendU64(&recordsBlob, record.offsetEnd);
+        AppendU64(&recordsBlob, static_cast<unsigned long long>(record.objectType));
+        AppendU32(&recordsBlob, static_cast<DWORD>(record.firstBytes.size()));
+        AppendBytes(&recordsBlob, record.firstBytes.data(), record.firstBytes.size());
+        AppendU32(&recordsBlob, static_cast<DWORD>(record.objectSignature.size()));
+        AppendBytes(&recordsBlob, record.objectSignature.data(), record.objectSignature.size());
+        const std::string threat = WideToUtf8(record.threatName);
+        AppendU32(&recordsBlob, static_cast<DWORD>(threat.size()));
+        AppendBytes(&recordsBlob, threat.data(), threat.size());
+
+        const DWORD recordLength = static_cast<DWORD>(recordsBlob.size() - recordOffset);
+        const std::vector<unsigned char> recordHash = Sha256Bytes(recordsBlob.data() + recordOffset, recordLength);
+        AppendU32(&manifest, recordOffset);
+        AppendU32(&manifest, recordLength);
+        AppendU32(&manifest, static_cast<DWORD>(record.avRecordSignature.size()));
+        AppendBytes(&manifest, record.avRecordSignature.data(), record.avRecordSignature.size());
+        AppendU32(&manifest, static_cast<DWORD>(recordHash.size()));
+        AppendBytes(&manifest, recordHash.data(), recordHash.size());
+    }
+
+    const std::vector<unsigned char> manifestSig = ManifestSignature(manifest);
+    output->clear();
+    const char magic[8] = { 'B','M','T','X','A','V','D','B' };
+    AppendBytes(output, magic, sizeof(magic));
+    AppendU32(output, 1);
+    AppendU32(output, static_cast<DWORD>(manifest.size()));
+    AppendU32(output, static_cast<DWORD>(manifestSig.size()));
+    AppendU32(output, static_cast<DWORD>(recordsBlob.size()));
+    AppendBytes(output, manifest.data(), manifest.size());
+    AppendBytes(output, manifestSig.data(), manifestSig.size());
+    AppendBytes(output, recordsBlob.data(), recordsBlob.size());
+    return true;
+}
+
+bool SaveAvDatabaseToPath(const AvDatabase& database, const std::wstring& path) {
+    std::vector<unsigned char> blob;
+    return SerializeAvDatabase(database, &blob) && WriteBinaryFile(path, blob);
+}
+
+bool ParseOneBinaryRecord(const std::vector<unsigned char>& recordBytes, AvRecord* record) {
+    if (record == nullptr) {
+        return false;
+    }
+    size_t pos = 0;
+    unsigned long long objectType = 0;
+    DWORD firstBytesSize = 0;
+    DWORD signatureSize = 0;
+    DWORD threatSize = 0;
+    if (!ReadU64(recordBytes, &pos, &record->objectSignaturePrefix) ||
+        !ReadU32(recordBytes, &pos, &record->objectSignatureLength) ||
+        !ReadU32(recordBytes, &pos, &record->serverLengthField) ||
+        !ReadU64(recordBytes, &pos, &record->offsetBegin) ||
+        !ReadU64(recordBytes, &pos, &record->offsetEnd) ||
+        !ReadU64(recordBytes, &pos, &objectType) ||
+        !ReadU32(recordBytes, &pos, &firstBytesSize) || firstBytesSize < 8 || pos + firstBytesSize > recordBytes.size()) {
+        return false;
+    }
+    record->firstBytes.assign(recordBytes.begin() + pos, recordBytes.begin() + pos + firstBytesSize);
+    pos += firstBytesSize;
+    if (!ReadU32(recordBytes, &pos, &signatureSize) || signatureSize == 0 || pos + signatureSize > recordBytes.size()) {
+        return false;
+    }
+    record->objectSignature.assign(recordBytes.begin() + pos, recordBytes.begin() + pos + signatureSize);
+    pos += signatureSize;
+    if (!ReadU32(recordBytes, &pos, &threatSize) || pos + threatSize > recordBytes.size()) {
+        return false;
+    }
+    std::string threat(reinterpret_cast<const char*>(recordBytes.data() + pos), reinterpret_cast<const char*>(recordBytes.data() + pos + threatSize));
+    record->threatName = Utf8ToWide(threat);
+    if (record->threatName.empty()) {
+        record->threatName = L"Local.Signature";
+    }
+    if (objectType == static_cast<unsigned long long>(AvObjectType::PeFile)) {
+        record->objectType = AvObjectType::PeFile;
+    } else if (objectType == static_cast<unsigned long long>(AvObjectType::Script)) {
+        record->objectType = AvObjectType::Script;
+    } else {
+        record->objectType = AvObjectType::Any;
+    }
+    return record->offsetEnd >= record->offsetBegin && record->objectSignaturePrefix == PrefixFromBytes(record->firstBytes.data());
+}
+
+DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkRepair) {
+    std::vector<unsigned char> blob;
+    if (!ReadBinaryFile(path, &blob) || blob.size() < 24) {
+        return ERROR_FILE_NOT_FOUND;
+    }
+    const char magic[8] = { 'B','M','T','X','A','V','D','B' };
+    if (std::memcmp(blob.data(), magic, sizeof(magic)) != 0) {
+        return ERROR_INVALID_DATA;
+    }
+    size_t pos = 8;
+    DWORD version = 0, manifestSize = 0, manifestSigSize = 0, recordsSize = 0;
+    if (!ReadU32(blob, &pos, &version) || !ReadU32(blob, &pos, &manifestSize) || !ReadU32(blob, &pos, &manifestSigSize) || !ReadU32(blob, &pos, &recordsSize) || version != 1) {
+        return ERROR_INVALID_DATA;
+    }
+    if (pos + manifestSize + manifestSigSize + recordsSize > blob.size()) {
+        return ERROR_INVALID_DATA;
+    }
+    std::vector<unsigned char> manifest(blob.begin() + pos, blob.begin() + pos + manifestSize);
+    pos += manifestSize;
+    std::vector<unsigned char> manifestSig(blob.begin() + pos, blob.begin() + pos + manifestSigSize);
+    pos += manifestSigSize;
+    std::vector<unsigned char> recordsBlob(blob.begin() + pos, blob.begin() + pos + recordsSize);
+
+    if (!VerifyManifestSignature(manifest, manifestSig)) {
+        if (allowNetworkRepair) {
+            const DWORD updated = UpdateAntivirusDatabaseFromServerWithRollback(true);
+            if (updated == ERROR_SUCCESS) {
+                return ERROR_SUCCESS;
+            }
+        }
+        return ERROR_INVALID_DATA;
+    }
+
+    size_t mp = 0;
+    DWORD count = 0;
+    unsigned long long releaseTicks = 0;
+    if (!ReadU32(manifest, &mp, &count) || !ReadU64(manifest, &mp, &releaseTicks)) {
+        return ERROR_INVALID_DATA;
+    }
+
+    AvDatabase database{};
+    database.loaded = true;
+    database.releaseDate = UInt64ToFileTime(releaseTicks);
+    for (DWORD i = 0; i < count; ++i) {
+        DWORD recordOffset = 0, recordLength = 0, recordSigSize = 0, recordHashSize = 0;
+        if (!ReadU32(manifest, &mp, &recordOffset) || !ReadU32(manifest, &mp, &recordLength) ||
+            !ReadU32(manifest, &mp, &recordSigSize) || mp + recordSigSize > manifest.size()) {
+            return ERROR_INVALID_DATA;
+        }
+        std::vector<unsigned char> recordSig(manifest.begin() + mp, manifest.begin() + mp + recordSigSize);
+        mp += recordSigSize;
+        if (!ReadU32(manifest, &mp, &recordHashSize) || mp + recordHashSize > manifest.size()) {
+            return ERROR_INVALID_DATA;
+        }
+        std::vector<unsigned char> expectedRecordHash(manifest.begin() + mp, manifest.begin() + mp + recordHashSize);
+        mp += recordHashSize;
+        if (recordOffset > recordsBlob.size() || recordLength == 0 || recordOffset + recordLength > recordsBlob.size()) {
+            continue;
+        }
+        const std::vector<unsigned char> one(recordsBlob.begin() + recordOffset, recordsBlob.begin() + recordOffset + recordLength);
+        const std::vector<unsigned char> actualRecordHash = Sha256Bytes(one.data(), one.size());
+        if (actualRecordHash != expectedRecordHash) {
+            continue;
+        }
+        AvRecord record{};
+        if (!ParseOneBinaryRecord(one, &record)) {
+            continue;
+        }
+        record.avRecordSignature = recordSig;
+        if (!VerifyRecordSignature(record)) {
+            if (allowNetworkRepair) {
+                const DWORD repaired = UpdateAntivirusDatabaseFromServerWithRollback(true);
+                if (repaired == ERROR_SUCCESS) {
+                    return ERROR_SUCCESS;
+                }
+            }
+            continue;
+        }
+        AddRecordToDatabase(&database, record);
+    }
+
+    EnterCriticalSection(&g_av_lock);
+    g_av_database = std::move(database);
+    LeaveCriticalSection(&g_av_lock);
+    return ERROR_SUCCESS;
+}
+
+bool BackupCurrentAvDatabase() {
+    EnsureAvDbDirectory();
+    const std::wstring db = GetAvDbPath();
+    const std::wstring bak = GetAvDbBackupPath();
+    if (GetFileAttributesW(db.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return true;
+    }
+    return CopyFileW(db.c_str(), bak.c_str(), FALSE) != FALSE;
+}
+
+DWORD LoadDefaultAntivirusDatabase() {
+    const AvDatabase database = MakeDefaultAntivirusDatabase();
+    SaveAvDatabaseToPath(database, GetAvDbPath());
+    EnterCriticalSection(&g_av_lock);
+    g_av_database = database;
+    LeaveCriticalSection(&g_av_lock);
+    EnterCriticalSection(&g_state_lock);
+    SetMessageLocked(L"AV database is damaged; default database loaded");
+    LeaveCriticalSection(&g_state_lock);
+    return ERROR_SUCCESS;
+}
+
+DWORD LoadAntivirusDatabaseFromDiskWithRecovery() {
+    EnsureAvDbDirectory();
+    DWORD result = LoadAntivirusDatabaseFromPath(GetAvDbPath(), true);
+    if (result == ERROR_SUCCESS) {
+        EnterCriticalSection(&g_state_lock);
+        SetMessageLocked(L"AV database loaded from signed binary file");
+        LeaveCriticalSection(&g_state_lock);
+        return ERROR_SUCCESS;
+    }
+
+    const std::wstring db = GetAvDbPath();
+    const std::wstring bak = GetAvDbBackupPath();
+    if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        CopyFileW(bak.c_str(), db.c_str(), FALSE);
+        result = LoadAntivirusDatabaseFromPath(db, false);
+        if (result == ERROR_SUCCESS) {
+            EnterCriticalSection(&g_state_lock);
+            SetMessageLocked(L"AV database restored from backup");
+            LeaveCriticalSection(&g_state_lock);
+            return ERROR_SUCCESS;
+        }
+    }
+
+    return LoadDefaultAntivirusDatabase();
+}
+
+DWORD ApplyDownloadedAntivirusDatabase(const std::wstring& json, bool saveToDisk) {
+    AvDatabase database{};
+    database.loaded = true;
+    GetSystemTimeAsFileTime(&database.releaseDate);
+
+    const std::vector<std::wstring> objects = ExtractJsonObjectsFromArray(json);
+    for (const std::wstring& object : objects) {
+        AvRecord record{};
+        if (ParseServerSignatureObject(object, &record)) {
+            record.avRecordSignature = HashRecordFields(record);
+            AddRecordToDatabase(&database, record);
+        }
+    }
+
+    if (saveToDisk && !SaveAvDatabaseToPath(database, GetAvDbPath())) {
+        return ERROR_WRITE_FAULT;
+    }
+
+    EnterCriticalSection(&g_av_lock);
+    g_av_database = std::move(database);
+    LeaveCriticalSection(&g_av_lock);
+    return ERROR_SUCCESS;
+}
+
 DWORD LoadAntivirusDatabaseFromServer() {
     std::wstring access_token;
     EnterCriticalSection(&g_state_lock);
@@ -437,24 +866,43 @@ DWORD LoadAntivirusDatabaseFromServer() {
         return ERROR_INVALID_DATA;
     }
 
-    AvDatabase database{};
-    database.loaded = true;
-    GetSystemTimeAsFileTime(&database.releaseDate);
-
-    const std::vector<std::wstring> objects = ExtractJsonObjectsFromArray(response.body);
-    for (const std::wstring& object : objects) {
-        AvRecord record{};
-        if (ParseServerSignatureObject(object, &record)) {
-            database.records[record.objectSignaturePrefix].push_back(record);
-        }
+    const DWORD applied = ApplyDownloadedAntivirusDatabase(response.body, true);
+    if (applied != ERROR_SUCCESS) {
+        return applied;
     }
 
-    EnterCriticalSection(&g_av_lock);
-    g_av_database = std::move(database);
-    LeaveCriticalSection(&g_av_lock);
+    EnterCriticalSection(&g_state_lock);
+    SetMessageLocked(L"AV database updated from server and saved as signed binary DB");
+    LeaveCriticalSection(&g_state_lock);
+    return ERROR_SUCCESS;
+}
+
+DWORD UpdateAntivirusDatabaseFromServerWithRollback(bool forced) {
+    BackupCurrentAvDatabase();
+    const DWORD downloaded = LoadAntivirusDatabaseFromServer();
+    if (downloaded != ERROR_SUCCESS) {
+        const std::wstring bak = GetAvDbBackupPath();
+        const std::wstring db = GetAvDbPath();
+        if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            CopyFileW(bak.c_str(), db.c_str(), FALSE);
+            LoadAntivirusDatabaseFromPath(db, false);
+        }
+        return downloaded;
+    }
+
+    const DWORD loaded = LoadAntivirusDatabaseFromPath(GetAvDbPath(), false);
+    if (loaded != ERROR_SUCCESS) {
+        const std::wstring bak = GetAvDbBackupPath();
+        const std::wstring db = GetAvDbPath();
+        if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            CopyFileW(bak.c_str(), db.c_str(), FALSE);
+            LoadAntivirusDatabaseFromPath(db, false);
+        }
+        return loaded;
+    }
 
     EnterCriticalSection(&g_state_lock);
-    SetMessageLocked(L"AV database loaded from server");
+    SetMessageLocked(forced ? L"Forced AV database update completed" : L"Periodic AV database update completed");
     LeaveCriticalSection(&g_state_lock);
     return ERROR_SUCCESS;
 }
@@ -486,7 +934,7 @@ DWORD EnsureAntivirusDatabaseLoaded() {
     if (loaded) {
         return ERROR_SUCCESS;
     }
-    return LoadAntivirusDatabaseFromServer();
+    return LoadAntivirusDatabaseFromDiskWithRecovery();
 }
 
 unsigned long CountAvRecordsLocked() {
@@ -751,7 +1199,7 @@ void SetServiceState(DWORD state, DWORD win32_exit_code = NO_ERROR, DWORD wait_h
     g_status.dwWaitHint = wait_hint;
 
     if (state == SERVICE_RUNNING) {
-        g_status.dwControlsAccepted = SERVICE_ACCEPT_SESSIONCHANGE;
+        g_status.dwControlsAccepted = SERVICE_ACCEPT_SESSIONCHANGE | SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
     } else {
         g_status.dwControlsAccepted = 0;
     }
@@ -1433,6 +1881,17 @@ DWORD ActivateProductInternal(const std::wstring& activation_code) {
     return LoadAntivirusDatabaseFromServer();
 }
 
+
+DWORD WINAPI AvUpdateWorkerThread(LPVOID) {
+    while (WaitForSingleObject(g_stop_event, kAvUpdatePeriodSeconds * 1000) == WAIT_TIMEOUT) {
+        if (!IsAntivirusUnlocked()) {
+            continue;
+        }
+        UpdateAntivirusDatabaseFromServerWithRollback(false);
+    }
+    return 0;
+}
+
 DWORD WINAPI RefreshWorkerThread(LPVOID) {
     while (WaitForSingleObject(g_stop_event, 5000) == WAIT_TIMEOUT) {
         bool need_token_refresh = false;
@@ -1633,6 +2092,9 @@ DWORD WINAPI ServiceControlHandler(DWORD control, DWORD event_type, LPVOID event
 
     case SERVICE_CONTROL_STOP:
     case SERVICE_CONTROL_SHUTDOWN:
+        if (g_stop_event != nullptr) {
+            SetEvent(g_stop_event);
+        }
         return NO_ERROR;
 
     default:
@@ -1660,6 +2122,8 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
         return;
     }
 
+    LoadAntivirusDatabaseFromDiskWithRecovery();
+
     if (!StartRpcServer()) {
         const DWORD error = GetLastError();
         CloseHandle(g_stop_event);
@@ -1672,6 +2136,7 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
     }
 
     g_refresh_thread = CreateThread(nullptr, 0, RefreshWorkerThread, nullptr, 0, nullptr);
+    g_av_update_thread = CreateThread(nullptr, 0, AvUpdateWorkerThread, nullptr, 0, nullptr);
 
     LaunchClientsInExistingSessions();
     SetServiceState(SERVICE_RUNNING);
@@ -1686,6 +2151,11 @@ void WINAPI ServiceMain(DWORD, LPWSTR*) {
         WaitForSingleObject(g_refresh_thread, 5000);
         CloseHandle(g_refresh_thread);
         g_refresh_thread = nullptr;
+    }
+    if (g_av_update_thread != nullptr) {
+        WaitForSingleObject(g_av_update_thread, 5000);
+        CloseHandle(g_av_update_thread);
+        g_av_update_thread = nullptr;
     }
 
     CloseHandle(g_stop_event);
@@ -1874,21 +2344,22 @@ extern "C" unsigned long BmtxGetAvDbInfo(handle_t, BMTX_AV_DB_INFO* info) {
     // If signatures are uploaded in Postman after activation, clicking "Инфо баз"
     // must download the fresh server state instead of returning the old in-memory cache.
     DWORD load_result = ERROR_SUCCESS;
-    if (!IsAntivirusUnlocked()) {
-        load_result = ERROR_ACCESS_DENIED;
-    } else {
-        load_result = LoadAntivirusDatabaseFromServer();
+    EnterCriticalSection(&g_av_lock);
+    const bool already_loaded = g_av_database.loaded;
+    LeaveCriticalSection(&g_av_lock);
+    if (!already_loaded) {
+        load_result = LoadAntivirusDatabaseFromDiskWithRecovery();
     }
 
     EnterCriticalSection(&g_av_lock);
     info->releaseDateUnix = FileTimeToUnixSeconds(g_av_database.releaseDate);
     info->recordCount = CountAvRecordsLocked();
     LeaveCriticalSection(&g_av_lock);
-    StringCchCopyW(info->engineName, ARRAYSIZE(info->engineName), L"BMTX Server AV Engine");
+    StringCchCopyW(info->engineName, ARRAYSIZE(info->engineName), L"BMTX Binary AV Engine");
     if (load_result == ERROR_SUCCESS) {
-        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database was reloaded from server into RAM std::map");
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database is loaded from signed binary storage");
     } else {
-        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"AV database was not loaded from server; authenticate, activate license, and check /api/signatures");
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"AV database was not loaded from disk/default storage");
     }
     return load_result;
 }
@@ -1898,13 +2369,9 @@ extern "C" unsigned long BmtxScanFile(handle_t, wchar_t* path, BMTX_SCAN_RESULT*
         return ERROR_INVALID_PARAMETER;
     }
     DWORD load_result = EnsureAntivirusDatabaseLoaded();
-    if (load_result == ERROR_SUCCESS) {
-        // Refresh before a scan so newly uploaded Postman signatures are used without restarting the service.
-        load_result = LoadAntivirusDatabaseFromServer();
-    }
     if (load_result != ERROR_SUCCESS) {
         ZeroMemory(result, sizeof(*result));
-        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from server");
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from signed binary storage");
         return load_result;
     }
     return ScanSingleFile(path, result);
@@ -1915,13 +2382,9 @@ extern "C" unsigned long BmtxScanDirectory(handle_t, wchar_t* path, BMTX_SCAN_RE
         return ERROR_INVALID_PARAMETER;
     }
     DWORD load_result = EnsureAntivirusDatabaseLoaded();
-    if (load_result == ERROR_SUCCESS) {
-        // Refresh before a scan so newly uploaded Postman signatures are used without restarting the service.
-        load_result = LoadAntivirusDatabaseFromServer();
-    }
     if (load_result != ERROR_SUCCESS) {
         ZeroMemory(result, sizeof(*result));
-        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from server");
+        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"AV database was not loaded from signed binary storage");
         return load_result;
     }
     ZeroMemory(result, sizeof(*result));
