@@ -1,8 +1,25 @@
-
+# Visual Studio / CMake
 .vs/
 build/
 out/
-target/
+artifacts/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Build outputs
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# User/local VS files
 *.user
 *.suo
-*.log
+*.VC.db
+*.VC.VC.opendb
