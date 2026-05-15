@@ -97,6 +97,134 @@ constexpr wchar_t kAvDbDirectoryName[] = L"avdb";
 constexpr wchar_t kAvDbFileName[] = L"bmtx_avdb.bin";
 constexpr wchar_t kAvDbBackupFileName[] = L"bmtx_avdb.bak";
 
+constexpr BYTE kAvDbRsaPublicKeyBlob[] = {
+    0x06, 0x02, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x52, 0x53, 0x41, 0x31,
+    0x00, 0x08, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0xE5, 0x5F, 0xC6, 0x7D,
+    0x39, 0x90, 0x61, 0xEC, 0xFC, 0x40, 0x0C, 0x01, 0xE1, 0x90, 0xC5, 0xA3,
+    0x0D, 0xCB, 0x09, 0x77, 0x31, 0x74, 0x79, 0x48, 0x56, 0x15, 0xB0, 0x68,
+    0xC1, 0x96, 0x60, 0x4D, 0xAB, 0x60, 0xCB, 0xCC, 0x8A, 0x5E, 0x05, 0x7E,
+    0x25, 0xBF, 0x21, 0xA1, 0x3E, 0xAA, 0x6B, 0x10, 0xE2, 0xAF, 0xE1, 0x5D,
+    0x57, 0x9C, 0xCA, 0x36, 0x21, 0x0F, 0x33, 0x95, 0x8F, 0x2B, 0x0B, 0x93,
+    0x0B, 0xAF, 0xC9, 0x0F, 0x1D, 0x46, 0x18, 0xB4, 0x57, 0x94, 0x77, 0xB8,
+    0x44, 0xB1, 0xD7, 0xD5, 0x18, 0x54, 0x49, 0xB3, 0xC5, 0xDF, 0x3D, 0x15,
+    0xF9, 0xA5, 0x32, 0x51, 0x45, 0x3F, 0x8A, 0x4E, 0x4E, 0x5F, 0x0D, 0x41,
+    0x87, 0x28, 0x7B, 0x7E, 0x6C, 0x25, 0xFB, 0x85, 0x29, 0x83, 0xBC, 0x2B,
+    0x93, 0xDA, 0x40, 0xCA, 0x1D, 0x17, 0x61, 0xFA, 0x63, 0x36, 0xB3, 0xCA,
+    0x2C, 0xA8, 0x0A, 0x47, 0xE6, 0x91, 0x53, 0x1B, 0x36, 0x9D, 0xB1, 0xCF,
+    0x5D, 0xB6, 0x74, 0x57, 0x37, 0x60, 0x1D, 0xD0, 0x3A, 0x91, 0x56, 0x8D,
+    0xAF, 0x88, 0xE1, 0xE2, 0xE4, 0x2C, 0x31, 0x10, 0xB8, 0x8E, 0xC3, 0x2B,
+    0x37, 0xDE, 0xB2, 0x1D, 0xBC, 0xD3, 0xD2, 0xFC, 0x92, 0xBC, 0x44, 0xED,
+    0x11, 0x44, 0x22, 0x27, 0x78, 0x5B, 0x55, 0xE3, 0xB6, 0x8D, 0xAA, 0x93,
+    0x9D, 0x54, 0x9B, 0x76, 0x2C, 0x4B, 0x20, 0xE5, 0x83, 0x59, 0xC2, 0xBE,
+    0x38, 0x8C, 0x57, 0x08, 0xD2, 0x47, 0xC9, 0xCB, 0x6F, 0xB1, 0xDF, 0xA3,
+    0x4A, 0x81, 0x0A, 0x99, 0xE6, 0xE1, 0xCD, 0x8B, 0x49, 0x39, 0xC1, 0x03,
+    0x4D, 0xD7, 0x23, 0x8E, 0x95, 0xBC, 0xAC, 0xF5, 0xC0, 0x7E, 0x1E, 0xC6,
+    0xBC, 0x2D, 0x87, 0x62, 0x98, 0x7A, 0x16, 0x1B, 0xFE, 0x9A, 0x50, 0x83,
+    0x28, 0x64, 0x6D, 0x64, 0xAD, 0x77, 0xC3, 0xE8, 0x90, 0x23, 0xA7, 0xEA
+};
+
+constexpr BYTE kAvDbRsaPrivateKeyBlob[] = {
+    0x07, 0x02, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x52, 0x53, 0x41, 0x32,
+    0x00, 0x08, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0xE5, 0x5F, 0xC6, 0x7D,
+    0x39, 0x90, 0x61, 0xEC, 0xFC, 0x40, 0x0C, 0x01, 0xE1, 0x90, 0xC5, 0xA3,
+    0x0D, 0xCB, 0x09, 0x77, 0x31, 0x74, 0x79, 0x48, 0x56, 0x15, 0xB0, 0x68,
+    0xC1, 0x96, 0x60, 0x4D, 0xAB, 0x60, 0xCB, 0xCC, 0x8A, 0x5E, 0x05, 0x7E,
+    0x25, 0xBF, 0x21, 0xA1, 0x3E, 0xAA, 0x6B, 0x10, 0xE2, 0xAF, 0xE1, 0x5D,
+    0x57, 0x9C, 0xCA, 0x36, 0x21, 0x0F, 0x33, 0x95, 0x8F, 0x2B, 0x0B, 0x93,
+    0x0B, 0xAF, 0xC9, 0x0F, 0x1D, 0x46, 0x18, 0xB4, 0x57, 0x94, 0x77, 0xB8,
+    0x44, 0xB1, 0xD7, 0xD5, 0x18, 0x54, 0x49, 0xB3, 0xC5, 0xDF, 0x3D, 0x15,
+    0xF9, 0xA5, 0x32, 0x51, 0x45, 0x3F, 0x8A, 0x4E, 0x4E, 0x5F, 0x0D, 0x41,
+    0x87, 0x28, 0x7B, 0x7E, 0x6C, 0x25, 0xFB, 0x85, 0x29, 0x83, 0xBC, 0x2B,
+    0x93, 0xDA, 0x40, 0xCA, 0x1D, 0x17, 0x61, 0xFA, 0x63, 0x36, 0xB3, 0xCA,
+    0x2C, 0xA8, 0x0A, 0x47, 0xE6, 0x91, 0x53, 0x1B, 0x36, 0x9D, 0xB1, 0xCF,
+    0x5D, 0xB6, 0x74, 0x57, 0x37, 0x60, 0x1D, 0xD0, 0x3A, 0x91, 0x56, 0x8D,
+    0xAF, 0x88, 0xE1, 0xE2, 0xE4, 0x2C, 0x31, 0x10, 0xB8, 0x8E, 0xC3, 0x2B,
+    0x37, 0xDE, 0xB2, 0x1D, 0xBC, 0xD3, 0xD2, 0xFC, 0x92, 0xBC, 0x44, 0xED,
+    0x11, 0x44, 0x22, 0x27, 0x78, 0x5B, 0x55, 0xE3, 0xB6, 0x8D, 0xAA, 0x93,
+    0x9D, 0x54, 0x9B, 0x76, 0x2C, 0x4B, 0x20, 0xE5, 0x83, 0x59, 0xC2, 0xBE,
+    0x38, 0x8C, 0x57, 0x08, 0xD2, 0x47, 0xC9, 0xCB, 0x6F, 0xB1, 0xDF, 0xA3,
+    0x4A, 0x81, 0x0A, 0x99, 0xE6, 0xE1, 0xCD, 0x8B, 0x49, 0x39, 0xC1, 0x03,
+    0x4D, 0xD7, 0x23, 0x8E, 0x95, 0xBC, 0xAC, 0xF5, 0xC0, 0x7E, 0x1E, 0xC6,
+    0xBC, 0x2D, 0x87, 0x62, 0x98, 0x7A, 0x16, 0x1B, 0xFE, 0x9A, 0x50, 0x83,
+    0x28, 0x64, 0x6D, 0x64, 0xAD, 0x77, 0xC3, 0xE8, 0x90, 0x23, 0xA7, 0xEA,
+    0x91, 0x28, 0x30, 0xD7, 0xED, 0xF7, 0x96, 0xE8, 0x89, 0x4D, 0xDC, 0xD0,
+    0xB1, 0xE7, 0x32, 0x1A, 0x79, 0x9C, 0x23, 0xB8, 0x21, 0xA3, 0x5C, 0x45,
+    0xF3, 0x0B, 0xFD, 0x68, 0x98, 0x1E, 0x3C, 0x26, 0x91, 0xF2, 0x32, 0xAB,
+    0xE8, 0x8B, 0x91, 0x5B, 0x85, 0x87, 0x03, 0xEC, 0xC3, 0xF2, 0x5D, 0x2B,
+    0x11, 0xDD, 0x3B, 0x53, 0x79, 0xE3, 0x62, 0xDD, 0xA8, 0xD3, 0x10, 0xE4,
+    0x19, 0x53, 0x06, 0x44, 0x9D, 0xF3, 0x0D, 0x40, 0xFB, 0x64, 0xF3, 0xF3,
+    0x1A, 0x0D, 0xCF, 0x51, 0xC6, 0xFE, 0xF9, 0x2A, 0xE1, 0xEE, 0x15, 0x84,
+    0xF2, 0x0E, 0xB1, 0xD4, 0xEB, 0xFC, 0x13, 0x81, 0x8D, 0x71, 0xA7, 0xB4,
+    0x25, 0xFA, 0xAC, 0x2A, 0x5F, 0xE1, 0x0B, 0x25, 0x2A, 0x29, 0x76, 0xB5,
+    0x48, 0xA4, 0x5D, 0x12, 0x40, 0x8E, 0xBB, 0x85, 0x5C, 0xDC, 0xE5, 0x00,
+    0x06, 0x18, 0x39, 0xF6, 0x2E, 0x7A, 0xCA, 0xF9, 0x15, 0x4C, 0x48, 0x02,
+    0x78, 0x74, 0x8D, 0x77, 0x3A, 0x75, 0x84, 0x2B, 0xE8, 0x62, 0x29, 0xAB,
+    0xD4, 0x66, 0x06, 0x72, 0xB6, 0x28, 0x1B, 0x2E, 0xD6, 0x86, 0x47, 0x20,
+    0x16, 0xC5, 0x72, 0x7B, 0xA4, 0x6C, 0xA4, 0x45, 0x53, 0x01, 0xA6, 0x73,
+    0x33, 0xE7, 0x5C, 0xCA, 0x45, 0x77, 0xCE, 0x76, 0x40, 0x16, 0x9D, 0x21,
+    0x44, 0x90, 0x1C, 0x14, 0x84, 0x2D, 0xBD, 0x7C, 0x08, 0x6D, 0x07, 0xA9,
+    0xA4, 0xCE, 0x7F, 0x08, 0x77, 0xF8, 0x16, 0xFA, 0x67, 0x20, 0x6F, 0x51,
+    0x8B, 0x04, 0x58, 0xD4, 0x94, 0xF8, 0xD4, 0x41, 0xC7, 0xA2, 0xE7, 0x24,
+    0x80, 0x7B, 0x11, 0x2D, 0xA1, 0xD2, 0x0C, 0x99, 0xF4, 0x32, 0x36, 0xC1,
+    0xA6, 0x30, 0xA5, 0x8E, 0x58, 0x20, 0xE0, 0xF9, 0x4E, 0x8E, 0x74, 0xFA,
+    0x45, 0xA5, 0xEC, 0xC7, 0xA7, 0xE1, 0x3A, 0x76, 0xFB, 0xA1, 0xF9, 0x81,
+    0x01, 0x55, 0x7C, 0xF0, 0x51, 0x5E, 0x6D, 0xE9, 0x71, 0xCE, 0x3A, 0x39,
+    0x17, 0x6A, 0x79, 0xF7, 0x45, 0x16, 0x73, 0x44, 0x0F, 0xBF, 0x7F, 0xC1,
+    0xB3, 0x3E, 0x8F, 0x90, 0x2A, 0xA1, 0xEE, 0x40, 0x05, 0x55, 0x47, 0x16,
+    0x86, 0x10, 0x9F, 0x18, 0x0E, 0x36, 0x0C, 0x43, 0xDF, 0x19, 0x52, 0x98,
+    0xC4, 0x32, 0x66, 0x16, 0x93, 0x11, 0x27, 0x4A, 0xD1, 0x6B, 0xCA, 0x6C,
+    0x33, 0xB1, 0x4C, 0xD6, 0xBD, 0x13, 0x0F, 0xF4, 0x7F, 0x45, 0xB7, 0xCD,
+    0x38, 0xE4, 0xA3, 0x99, 0xF7, 0x45, 0xD2, 0x5C, 0x8F, 0x9A, 0x59, 0x9B,
+    0x22, 0x0F, 0x5E, 0x43, 0x13, 0x4C, 0x4E, 0x61, 0x43, 0x84, 0x19, 0x16,
+    0xA2, 0x99, 0xC3, 0x31, 0xEF, 0xCE, 0xC5, 0x53, 0x32, 0xFC, 0xA7, 0xA2,
+    0xB2, 0xE5, 0x4D, 0xF0, 0x96, 0xA6, 0x4F, 0x63, 0x57, 0x54, 0x93, 0x25,
+    0xD7, 0x60, 0xCD, 0xB0, 0x3E, 0xD0, 0xBA, 0xC5, 0xF0, 0xF0, 0xAC, 0x20,
+    0xBD, 0xE0, 0x63, 0x13, 0xFC, 0xB5, 0x37, 0x16, 0x72, 0x38, 0x59, 0x5E,
+    0xD6, 0x8D, 0x3D, 0xE3, 0x60, 0x4E, 0x14, 0xFF, 0x30, 0xE5, 0x46, 0xEB,
+    0x8B, 0x4A, 0xE1, 0x6F, 0xD3, 0x62, 0x65, 0xA2, 0x69, 0xEE, 0x1C, 0xC7,
+    0x49, 0x32, 0xF8, 0x78, 0x94, 0x71, 0x1C, 0x99, 0xB2, 0xC9, 0x14, 0xF6,
+    0x15, 0x67, 0x52, 0x45, 0x3D, 0x54, 0xCF, 0x86, 0xC5, 0x2C, 0xE2, 0x0E,
+    0x25, 0xF2, 0x94, 0xCF, 0x91, 0x3A, 0xFC, 0x19, 0x64, 0x51, 0x0E, 0x9C,
+    0xA7, 0xE3, 0xC5, 0xD7, 0x49, 0xD3, 0xAB, 0x82, 0xAC, 0x8D, 0xCC, 0x35,
+    0xD8, 0x7E, 0x50, 0xB9, 0xD8, 0xF8, 0x62, 0x19, 0x40, 0x02, 0xC6, 0xD9,
+    0x88, 0xC8, 0x78, 0x1A, 0x37, 0x39, 0x7D, 0x4A, 0x13, 0xAA, 0x46, 0xFD,
+    0x6C, 0xF0, 0xD2, 0xB3, 0x64, 0x0D, 0x02, 0x14, 0x2A, 0x62, 0x86, 0xBC,
+    0x76, 0x7C, 0xD1, 0x95, 0xF9, 0x2C, 0x0D, 0x66, 0xC8, 0x5D, 0x89, 0xEC,
+    0x80, 0xB8, 0xE9, 0x36, 0x41, 0x0A, 0x90, 0x5A, 0x05, 0xB2, 0xB6, 0xB7,
+    0xF4, 0xFB, 0x7D, 0x2C, 0x44, 0xCB, 0x7E, 0x8A, 0xA1, 0xA6, 0x10, 0xAD,
+    0x75, 0xD5, 0x33, 0x0D, 0xBA, 0xE6, 0x4E, 0x95, 0x33, 0x08, 0x9E, 0x1A,
+    0x41, 0xAF, 0x97, 0xCE, 0x07, 0x36, 0xF5, 0x48, 0xE9, 0x35, 0xDF, 0xB8,
+    0xD7, 0xBE, 0x0D, 0xF3, 0x8D, 0x71, 0xD1, 0xDE, 0x8C, 0x42, 0x8A, 0xCD,
+    0xE5, 0xE4, 0x3C, 0x81, 0xB1, 0x87, 0xA7, 0xC7, 0xC8, 0x1D, 0xAB, 0x4C,
+    0x18, 0x22, 0x3C, 0x7D, 0x9F, 0x38, 0xEF, 0x2E, 0x45, 0x42, 0x21, 0x34,
+    0xF6, 0x57, 0x75, 0xD6, 0x8E, 0xC4, 0x61, 0x24, 0x51, 0x7D, 0x9B, 0xAB,
+    0xF1, 0x90, 0x48, 0x40, 0x23, 0x2E, 0x0A, 0xF3, 0xC4, 0xAA, 0xA5, 0xDC,
+    0x29, 0xFF, 0x3D, 0xF5, 0x51, 0xE4, 0xE1, 0x50, 0xCB, 0x28, 0x13, 0x0F,
+    0xB1, 0x87, 0xD9, 0x80, 0x91, 0x57, 0xCC, 0xCA, 0x0A, 0xD4, 0xCE, 0x74,
+    0x61, 0xBA, 0x5C, 0x21, 0x77, 0x50, 0xD1, 0xB2, 0x05, 0x87, 0x57, 0x9D,
+    0x20, 0x56, 0x95, 0x93, 0xF1, 0x0A, 0xD0, 0xE5, 0xA8, 0x64, 0xB3, 0x64,
+    0x00, 0x79, 0xE5, 0xE6, 0x89, 0xF5, 0x80, 0x6E, 0x1F, 0x98, 0x6C, 0x03,
+    0x44, 0xB3, 0x61, 0x72, 0x98, 0x65, 0x7E, 0xF7, 0x98, 0xEA, 0x65, 0xAF,
+    0xDB, 0x5B, 0x70, 0x5A, 0x23, 0x99, 0x31, 0x46, 0x18, 0x66, 0x34, 0xC9,
+    0x0F, 0x3A, 0x59, 0x66, 0x40, 0x2E, 0x03, 0xE6, 0xAC, 0x61, 0xCA, 0x76,
+    0x4C, 0xB0, 0x6C, 0xF5, 0xE8, 0xDE, 0xEC, 0x39, 0xE8, 0x15, 0x40, 0x16,
+    0xB5, 0xED, 0x31, 0x40, 0xDC, 0x46, 0xFE, 0x55, 0xEB, 0xFD, 0xD4, 0x23,
+    0x42, 0x32, 0xEA, 0x25, 0xA1, 0x5C, 0x75, 0xC8, 0x0F, 0x5D, 0x02, 0xF6,
+    0xC1, 0xBC, 0xF2, 0x3E, 0xA2, 0x5F, 0x67, 0x91, 0xDC, 0x41, 0x5E, 0xA5,
+    0xC4, 0x0E, 0xDF, 0x01, 0xC3, 0x5A, 0x2A, 0xCE, 0xCD, 0xB9, 0x6D, 0x26,
+    0x85, 0x92, 0x6E, 0x9E, 0x9E, 0xB2, 0x38, 0x47, 0xC4, 0x33, 0xAB, 0x6F,
+    0x8C, 0x11, 0x17, 0x1B, 0xE5, 0xB8, 0xA0, 0x60, 0xF6, 0xEE, 0x3D, 0x8F,
+    0xD6, 0xF2, 0x6A, 0xB5, 0x3C, 0xC5, 0x2D, 0xFE, 0x5C, 0x43, 0x74, 0x83,
+    0xAB, 0x34, 0xB0, 0xB7, 0x46, 0xF2, 0x71, 0x22, 0xEB, 0x07, 0x08, 0xFA,
+    0x90, 0xBA, 0x45, 0x80, 0x69, 0x24, 0x04, 0x5A, 0x3A, 0x97, 0xBD, 0xA4,
+    0xB7, 0xF8, 0xEA, 0x14, 0x07, 0x8F, 0x8A, 0xEE, 0x77, 0x5D, 0x22, 0xEC,
+    0x39, 0x9A, 0x30, 0x48, 0x37, 0xB4, 0xD4, 0x6E, 0xC0, 0x33, 0x07, 0x4A,
+    0xFC, 0xD3, 0x20, 0x82, 0xDD, 0x53, 0xCC, 0x6B, 0xA3, 0x3C, 0x35, 0x52,
+    0x55, 0xF1, 0x91, 0xF0, 0xAA, 0x02, 0x5E, 0x83, 0x26, 0x03, 0x8C, 0xA1,
+    0xC7, 0x3C, 0x44, 0xA9, 0xE8, 0xDF, 0x50, 0x3A
+};
+
+
 struct HttpResponse {
     DWORD status = 0;
     std::wstring body;
@@ -117,6 +245,7 @@ FILETIME UInt64ToFileTime(ULONGLONG value);
 std::wstring GetModuleDirectory();
 DWORD LoadAntivirusDatabaseFromDiskWithRecovery();
 DWORD UpdateAntivirusDatabaseFromServerWithRollback(bool forced);
+DWORD RequestAntivirusRecordRepairFromServer();
 
 unsigned long long PrefixFromBytes(const unsigned char* data) {
     unsigned long long value = 0;
@@ -162,17 +291,94 @@ std::vector<unsigned char> Sha256Bytes(const unsigned char* data, size_t size) {
     return result;
 }
 
-std::vector<unsigned char> HashRecordFields(const AvRecord& record) {
-    std::vector<unsigned char> raw;
-    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.objectSignaturePrefix), reinterpret_cast<const unsigned char*>(&record.objectSignaturePrefix) + sizeof(record.objectSignaturePrefix));
-    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.objectSignatureLength), reinterpret_cast<const unsigned char*>(&record.objectSignatureLength) + sizeof(record.objectSignatureLength));
-    raw.insert(raw.end(), record.objectSignature.begin(), record.objectSignature.end());
-    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.offsetBegin), reinterpret_cast<const unsigned char*>(&record.offsetBegin) + sizeof(record.offsetBegin));
-    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&record.offsetEnd), reinterpret_cast<const unsigned char*>(&record.offsetEnd) + sizeof(record.offsetEnd));
-    const unsigned long long objectType = static_cast<unsigned long long>(record.objectType);
-    raw.insert(raw.end(), reinterpret_cast<const unsigned char*>(&objectType), reinterpret_cast<const unsigned char*>(&objectType) + sizeof(objectType));
-    return Sha256Bytes(raw.data(), raw.size());
+bool AcquireCryptoProvider(HCRYPTPROV* provider) {
+    if (provider == nullptr) {
+        return false;
+    }
+    *provider = 0;
+    return CryptAcquireContextW(provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) != FALSE;
 }
+
+bool ImportRsaKey(const BYTE* blob, DWORD blobSize, HCRYPTPROV provider, HCRYPTKEY* key) {
+    if (blob == nullptr || blobSize == 0 || key == nullptr) {
+        return false;
+    }
+    *key = 0;
+    return CryptImportKey(provider, blob, blobSize, 0, 0, key) != FALSE;
+}
+
+std::vector<unsigned char> RsaSha256Sign(const std::vector<unsigned char>& data) {
+    if (data.empty()) {
+        return {};
+    }
+    HCRYPTPROV provider = 0;
+    HCRYPTKEY privateKey = 0;
+    HCRYPTHASH hash = 0;
+    std::vector<unsigned char> signature;
+    if (!AcquireCryptoProvider(&provider)) {
+        return {};
+    }
+    if (!ImportRsaKey(kAvDbRsaPrivateKeyBlob, static_cast<DWORD>(sizeof(kAvDbRsaPrivateKeyBlob)), provider, &privateKey)) {
+        CryptReleaseContext(provider, 0);
+        return {};
+    }
+    if (!CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash)) {
+        CryptDestroyKey(privateKey);
+        CryptReleaseContext(provider, 0);
+        return {};
+    }
+    if (!CryptHashData(hash, const_cast<BYTE*>(data.data()), static_cast<DWORD>(data.size()), 0)) {
+        CryptDestroyHash(hash);
+        CryptDestroyKey(privateKey);
+        CryptReleaseContext(provider, 0);
+        return {};
+    }
+    DWORD signatureSize = 0;
+    if (!CryptSignHashW(hash, AT_SIGNATURE, nullptr, 0, nullptr, &signatureSize) || signatureSize == 0) {
+        CryptDestroyHash(hash);
+        CryptDestroyKey(privateKey);
+        CryptReleaseContext(provider, 0);
+        return {};
+    }
+    signature.assign(signatureSize, 0);
+    if (!CryptSignHashW(hash, AT_SIGNATURE, nullptr, 0, signature.data(), &signatureSize)) {
+        signature.clear();
+    } else {
+        signature.resize(signatureSize);
+    }
+    CryptDestroyHash(hash);
+    CryptDestroyKey(privateKey);
+    CryptReleaseContext(provider, 0);
+    return signature;
+}
+
+bool RsaSha256Verify(const std::vector<unsigned char>& data, const std::vector<unsigned char>& signature) {
+    if (data.empty() || signature.empty()) {
+        return false;
+    }
+    HCRYPTPROV provider = 0;
+    HCRYPTKEY publicKey = 0;
+    HCRYPTHASH hash = 0;
+    bool ok = false;
+    if (!AcquireCryptoProvider(&provider)) {
+        return false;
+    }
+    if (!ImportRsaKey(kAvDbRsaPublicKeyBlob, static_cast<DWORD>(sizeof(kAvDbRsaPublicKeyBlob)), provider, &publicKey)) {
+        CryptReleaseContext(provider, 0);
+        return false;
+    }
+    if (CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash) &&
+        CryptHashData(hash, const_cast<BYTE*>(data.data()), static_cast<DWORD>(data.size()), 0)) {
+        ok = CryptVerifySignatureW(hash, const_cast<BYTE*>(signature.data()), static_cast<DWORD>(signature.size()), publicKey, nullptr, 0) != FALSE;
+    }
+    if (hash != 0) {
+        CryptDestroyHash(hash);
+    }
+    CryptDestroyKey(publicKey);
+    CryptReleaseContext(provider, 0);
+    return ok;
+}
+
 
 std::vector<unsigned char> BytesFromHex(const std::wstring& hex) {
     std::vector<unsigned char> bytes;
@@ -339,7 +545,6 @@ bool ParseServerSignatureObject(const std::wstring& object, AvRecord* record) {
     if (offsetStart == 0) offsetStart = ExtractJsonDword(object, L"offsetBegin", 0);
     DWORD offsetEnd = ExtractJsonDword(object, L"offsetEnd", 0);
     const std::wstring status = ExtractJsonString(object, L"status");
-    const std::wstring recordSignatureBase64 = ExtractJsonString(object, L"digitalSignatureBase64");
 
     const std::vector<unsigned char> firstBytes = BytesFromHex(firstBytesHex);
     const std::vector<unsigned char> objectSignature = BytesFromHex(objectSignatureHex);
@@ -363,20 +568,7 @@ bool ParseServerSignatureObject(const std::wstring& object, AvRecord* record) {
     record->objectType = ParseObjectType(fileType, firstBytes, threatName, originalFileName, fileContentType);
     record->threatName = threatName.empty() ? L"Server.Signature" : threatName;
 
-    if (!recordSignatureBase64.empty()) {
-        // Base64 is ASCII text. Convert explicitly from wchar_t to bytes to avoid
-        // MSVC C4244 warnings and keep the AV-record signature field deterministic.
-        std::vector<unsigned char> sig;
-        sig.reserve(recordSignatureBase64.size());
-        for (wchar_t ch : recordSignatureBase64) {
-            if (ch >= 0 && ch <= 0x7F) {
-                sig.push_back(static_cast<unsigned char>(ch));
-            }
-        }
-        record->avRecordSignature = sig;
-    } else {
-        record->avRecordSignature = HashRecordFields(*record);
-    }
+    record->avRecordSignature.clear();
     return true;
 }
 
@@ -517,19 +709,15 @@ bool WriteBinaryFile(const std::wstring& path, const std::vector<unsigned char>&
 }
 
 std::vector<unsigned char> ManifestSignature(const std::vector<unsigned char>& manifestBody) {
-    if (manifestBody.empty()) {
-        return Sha256Bytes(reinterpret_cast<const unsigned char*>("BMTX_EMPTY_MANIFEST"), 19);
-    }
-    return Sha256Bytes(manifestBody.data(), manifestBody.size());
+    return RsaSha256Sign(manifestBody);
 }
 
 bool VerifyManifestSignature(const std::vector<unsigned char>& manifestBody, const std::vector<unsigned char>& signature) {
-    return !signature.empty() && ManifestSignature(manifestBody) == signature;
+    return RsaSha256Verify(manifestBody, signature);
 }
 
-bool VerifyRecordSignature(const AvRecord& record) {
-    const std::vector<unsigned char> expected = HashRecordFields(record);
-    return !expected.empty() && record.avRecordSignature == expected;
+bool VerifyRecordSignatureBytes(const std::vector<unsigned char>& recordBytes, const std::vector<unsigned char>& signature) {
+    return RsaSha256Verify(recordBytes, signature);
 }
 
 void AddRecordToDatabase(AvDatabase* database, const AvRecord& record) {
@@ -537,6 +725,14 @@ void AddRecordToDatabase(AvDatabase* database, const AvRecord& record) {
         return;
     }
     database->records[record.objectSignaturePrefix].push_back(record);
+}
+
+size_t CountRecordsInDatabase(const AvDatabase& database) {
+    size_t total = 0;
+    for (const auto& bucket : database.records) {
+        total += bucket.second.size();
+    }
+    return total;
 }
 
 AvRecord MakeDefaultRecord(const char* sample, const wchar_t* name, AvObjectType type) {
@@ -556,18 +752,36 @@ AvRecord MakeDefaultRecord(const char* sample, const wchar_t* name, AvObjectType
     record.offsetEnd = 1024 * 1024;
     record.objectType = type;
     record.threatName = name;
-    record.avRecordSignature = HashRecordFields(record);
     return record;
 }
 
 AvDatabase MakeDefaultAntivirusDatabase() {
     AvDatabase database{};
     database.loaded = true;
-    GetSystemTimeAsFileTime(&database.releaseDate);
+    database.releaseDate.dwLowDateTime = 0x7689C000;
+    database.releaseDate.dwHighDateTime = 0x01DA3C45;
     AddRecordToDatabase(&database, MakeDefaultRecord("BMTXTESTVIRUS", L"Default.Test.Virus", AvObjectType::Script));
     AddRecordToDatabase(&database, MakeDefaultRecord("MZBMTXDEFAULTPE", L"Default.PE.Test", AvObjectType::PeFile));
     AddRecordToDatabase(&database, MakeDefaultRecord("EICARBMTXDEFAULT", L"Default.Eicar.Lab", AvObjectType::Any));
     return database;
+}
+
+std::vector<unsigned char> BuildRecordBinary(const AvRecord& record) {
+    std::vector<unsigned char> result;
+    AppendU64(&result, record.objectSignaturePrefix);
+    AppendU32(&result, record.objectSignatureLength);
+    AppendU32(&result, record.serverLengthField);
+    AppendU64(&result, record.offsetBegin);
+    AppendU64(&result, record.offsetEnd);
+    AppendU64(&result, static_cast<unsigned long long>(record.objectType));
+    AppendU32(&result, static_cast<DWORD>(record.firstBytes.size()));
+    AppendBytes(&result, record.firstBytes.data(), record.firstBytes.size());
+    AppendU32(&result, static_cast<DWORD>(record.objectSignature.size()));
+    AppendBytes(&result, record.objectSignature.data(), record.objectSignature.size());
+    const std::string threat = WideToUtf8(record.threatName);
+    AppendU32(&result, static_cast<DWORD>(threat.size()));
+    AppendBytes(&result, threat.data(), threat.size());
+    return result;
 }
 
 bool SerializeAvDatabase(const AvDatabase& database, std::vector<unsigned char>* output) {
@@ -576,8 +790,7 @@ bool SerializeAvDatabase(const AvDatabase& database, std::vector<unsigned char>*
     }
     std::vector<AvRecord> records;
     for (const auto& item : database.records) {
-        for (AvRecord record : item.second) {
-            record.avRecordSignature = HashRecordFields(record);
+        for (const AvRecord& record : item.second) {
             records.push_back(record);
         }
     }
@@ -589,31 +802,25 @@ bool SerializeAvDatabase(const AvDatabase& database, std::vector<unsigned char>*
 
     for (const AvRecord& record : records) {
         const DWORD recordOffset = static_cast<DWORD>(recordsBlob.size());
-        AppendU64(&recordsBlob, record.objectSignaturePrefix);
-        AppendU32(&recordsBlob, record.objectSignatureLength);
-        AppendU32(&recordsBlob, record.serverLengthField);
-        AppendU64(&recordsBlob, record.offsetBegin);
-        AppendU64(&recordsBlob, record.offsetEnd);
-        AppendU64(&recordsBlob, static_cast<unsigned long long>(record.objectType));
-        AppendU32(&recordsBlob, static_cast<DWORD>(record.firstBytes.size()));
-        AppendBytes(&recordsBlob, record.firstBytes.data(), record.firstBytes.size());
-        AppendU32(&recordsBlob, static_cast<DWORD>(record.objectSignature.size()));
-        AppendBytes(&recordsBlob, record.objectSignature.data(), record.objectSignature.size());
-        const std::string threat = WideToUtf8(record.threatName);
-        AppendU32(&recordsBlob, static_cast<DWORD>(threat.size()));
-        AppendBytes(&recordsBlob, threat.data(), threat.size());
-
-        const DWORD recordLength = static_cast<DWORD>(recordsBlob.size() - recordOffset);
-        const std::vector<unsigned char> recordHash = Sha256Bytes(recordsBlob.data() + recordOffset, recordLength);
+        const std::vector<unsigned char> recordBytes = BuildRecordBinary(record);
+        const std::vector<unsigned char> recordHash = Sha256Bytes(recordBytes.data(), recordBytes.size());
+        const std::vector<unsigned char> recordSignature = RsaSha256Sign(recordBytes);
+        if (recordBytes.empty() || recordHash.empty() || recordSignature.empty()) {
+            return false;
+        }
+        AppendBytes(&recordsBlob, recordBytes.data(), recordBytes.size());
         AppendU32(&manifest, recordOffset);
-        AppendU32(&manifest, recordLength);
-        AppendU32(&manifest, static_cast<DWORD>(record.avRecordSignature.size()));
-        AppendBytes(&manifest, record.avRecordSignature.data(), record.avRecordSignature.size());
+        AppendU32(&manifest, static_cast<DWORD>(recordBytes.size()));
+        AppendU32(&manifest, static_cast<DWORD>(recordSignature.size()));
+        AppendBytes(&manifest, recordSignature.data(), recordSignature.size());
         AppendU32(&manifest, static_cast<DWORD>(recordHash.size()));
         AppendBytes(&manifest, recordHash.data(), recordHash.size());
     }
 
     const std::vector<unsigned char> manifestSig = ManifestSignature(manifest);
+    if (manifestSig.empty()) {
+        return false;
+    }
     output->clear();
     const char magic[8] = { 'B','M','T','X','A','V','D','B' };
     AppendBytes(output, magic, sizeof(magic));
@@ -675,7 +882,7 @@ bool ParseOneBinaryRecord(const std::vector<unsigned char>& recordBytes, AvRecor
     return record->offsetEnd >= record->offsetBegin && record->objectSignaturePrefix == PrefixFromBytes(record->firstBytes.data());
 }
 
-DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkRepair) {
+DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkRepair, bool strictRecords = false) {
     std::vector<unsigned char> blob;
     if (!ReadBinaryFile(path, &blob) || blob.size() < 24) {
         return ERROR_FILE_NOT_FOUND;
@@ -689,7 +896,8 @@ DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkR
     if (!ReadU32(blob, &pos, &version) || !ReadU32(blob, &pos, &manifestSize) || !ReadU32(blob, &pos, &manifestSigSize) || !ReadU32(blob, &pos, &recordsSize) || version != 1) {
         return ERROR_INVALID_DATA;
     }
-    if (pos + manifestSize + manifestSigSize + recordsSize > blob.size()) {
+    const size_t expectedFileSize = pos + static_cast<size_t>(manifestSize) + static_cast<size_t>(manifestSigSize) + static_cast<size_t>(recordsSize);
+    if (expectedFileSize != blob.size()) {
         return ERROR_INVALID_DATA;
     }
     std::vector<unsigned char> manifest(blob.begin() + pos, blob.begin() + pos + manifestSize);
@@ -732,28 +940,52 @@ DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkR
         std::vector<unsigned char> expectedRecordHash(manifest.begin() + mp, manifest.begin() + mp + recordHashSize);
         mp += recordHashSize;
         if (recordOffset > recordsBlob.size() || recordLength == 0 || recordOffset + recordLength > recordsBlob.size()) {
+            if (strictRecords) {
+                return ERROR_INVALID_DATA;
+            }
             continue;
         }
         const std::vector<unsigned char> one(recordsBlob.begin() + recordOffset, recordsBlob.begin() + recordOffset + recordLength);
         const std::vector<unsigned char> actualRecordHash = Sha256Bytes(one.data(), one.size());
         if (actualRecordHash != expectedRecordHash) {
-            continue;
-        }
-        AvRecord record{};
-        if (!ParseOneBinaryRecord(one, &record)) {
-            continue;
-        }
-        record.avRecordSignature = recordSig;
-        if (!VerifyRecordSignature(record)) {
             if (allowNetworkRepair) {
-                const DWORD repaired = UpdateAntivirusDatabaseFromServerWithRollback(true);
+                const DWORD repaired = RequestAntivirusRecordRepairFromServer();
                 if (repaired == ERROR_SUCCESS) {
                     return ERROR_SUCCESS;
                 }
             }
+            if (strictRecords) {
+                return ERROR_INVALID_DATA;
+            }
             continue;
         }
+        if (!VerifyRecordSignatureBytes(one, recordSig)) {
+            if (allowNetworkRepair) {
+                const DWORD repaired = RequestAntivirusRecordRepairFromServer();
+                if (repaired == ERROR_SUCCESS) {
+                    return ERROR_SUCCESS;
+                }
+            }
+            if (strictRecords) {
+                return ERROR_INVALID_DATA;
+            }
+            continue;
+        }
+        AvRecord record{};
+        if (!ParseOneBinaryRecord(one, &record)) {
+            if (strictRecords) {
+                return ERROR_INVALID_DATA;
+            }
+            continue;
+        }
+        record.avRecordSignature = recordSig;
         AddRecordToDatabase(&database, record);
+    }
+    if (mp != manifest.size()) {
+        return ERROR_INVALID_DATA;
+    }
+    if (count > 0 && CountRecordsInDatabase(database) == 0) {
+        return ERROR_INVALID_DATA;
     }
 
     EnterCriticalSection(&g_av_lock);
@@ -762,19 +994,43 @@ DWORD LoadAntivirusDatabaseFromPath(const std::wstring& path, bool allowNetworkR
     return ERROR_SUCCESS;
 }
 
-bool BackupCurrentAvDatabase() {
+DWORD BackupCurrentAvDatabaseForUpdate(bool* backupCreated, bool* skippedDamagedDatabase) {
     EnsureAvDbDirectory();
+    if (backupCreated != nullptr) {
+        *backupCreated = false;
+    }
+    if (skippedDamagedDatabase != nullptr) {
+        *skippedDamagedDatabase = false;
+    }
+
     const std::wstring db = GetAvDbPath();
     const std::wstring bak = GetAvDbBackupPath();
     if (GetFileAttributesW(db.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        return true;
+        return ERROR_SUCCESS;
     }
-    return CopyFileW(db.c_str(), bak.c_str(), FALSE) != FALSE;
+
+    const DWORD validation = LoadAntivirusDatabaseFromPath(db, false, true);
+    if (validation != ERROR_SUCCESS) {
+        if (skippedDamagedDatabase != nullptr) {
+            *skippedDamagedDatabase = true;
+        }
+        return ERROR_SUCCESS;
+    }
+
+    if (CopyFileW(db.c_str(), bak.c_str(), FALSE) == FALSE) {
+        const DWORD error = GetLastError();
+        return error == ERROR_SUCCESS ? ERROR_WRITE_FAULT : error;
+    }
+    if (backupCreated != nullptr) {
+        *backupCreated = true;
+    }
+    return ERROR_SUCCESS;
 }
 
 DWORD LoadDefaultAntivirusDatabase() {
     const AvDatabase database = MakeDefaultAntivirusDatabase();
     SaveAvDatabaseToPath(database, GetAvDbPath());
+    SaveAvDatabaseToPath(database, GetAvDbBackupPath());
     EnterCriticalSection(&g_av_lock);
     g_av_database = database;
     LeaveCriticalSection(&g_av_lock);
@@ -819,9 +1075,11 @@ DWORD ApplyDownloadedAntivirusDatabase(const std::wstring& json, bool saveToDisk
     for (const std::wstring& object : objects) {
         AvRecord record{};
         if (ParseServerSignatureObject(object, &record)) {
-            record.avRecordSignature = HashRecordFields(record);
             AddRecordToDatabase(&database, record);
         }
+    }
+    if (CountRecordsInDatabase(database) == 0) {
+        return ERROR_INVALID_DATA;
     }
 
     if (saveToDisk && !SaveAvDatabaseToPath(database, GetAvDbPath())) {
@@ -877,34 +1135,61 @@ DWORD LoadAntivirusDatabaseFromServer() {
     return ERROR_SUCCESS;
 }
 
+DWORD RestoreAntivirusDatabaseFromBackupOrDefault() {
+    const std::wstring bak = GetAvDbBackupPath();
+    const std::wstring db = GetAvDbPath();
+    if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        CopyFileW(bak.c_str(), db.c_str(), FALSE);
+        const DWORD restored = LoadAntivirusDatabaseFromPath(db, false);
+        if (restored == ERROR_SUCCESS) {
+            EnterCriticalSection(&g_state_lock);
+            SetMessageLocked(L"AV database update failed; backup restored");
+            LeaveCriticalSection(&g_state_lock);
+            return ERROR_SUCCESS;
+        }
+    }
+    return LoadDefaultAntivirusDatabase();
+}
+
 DWORD UpdateAntivirusDatabaseFromServerWithRollback(bool forced) {
-    BackupCurrentAvDatabase();
+    bool backupCreated = false;
+    bool skippedDamagedDatabase = false;
+    const DWORD backupResult = BackupCurrentAvDatabaseForUpdate(&backupCreated, &skippedDamagedDatabase);
+    if (backupResult != ERROR_SUCCESS) {
+        EnterCriticalSection(&g_state_lock);
+        SetMessageLocked(L"AV database update aborted: failed to create backup");
+        LeaveCriticalSection(&g_state_lock);
+        return backupResult;
+    }
+
     const DWORD downloaded = LoadAntivirusDatabaseFromServer();
     if (downloaded != ERROR_SUCCESS) {
-        const std::wstring bak = GetAvDbBackupPath();
-        const std::wstring db = GetAvDbPath();
-        if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            CopyFileW(bak.c_str(), db.c_str(), FALSE);
-            LoadAntivirusDatabaseFromPath(db, false);
-        }
+        RestoreAntivirusDatabaseFromBackupOrDefault();
         return downloaded;
     }
 
     const DWORD loaded = LoadAntivirusDatabaseFromPath(GetAvDbPath(), false);
     if (loaded != ERROR_SUCCESS) {
-        const std::wstring bak = GetAvDbBackupPath();
-        const std::wstring db = GetAvDbPath();
-        if (GetFileAttributesW(bak.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            CopyFileW(bak.c_str(), db.c_str(), FALSE);
-            LoadAntivirusDatabaseFromPath(db, false);
-        }
+        RestoreAntivirusDatabaseFromBackupOrDefault();
         return loaded;
     }
 
     EnterCriticalSection(&g_state_lock);
-    SetMessageLocked(forced ? L"Forced AV database update completed" : L"Periodic AV database update completed");
+    if (skippedDamagedDatabase) {
+        SetMessageLocked(L"AV database repaired from update server; damaged local database was not backed up");
+    } else if (backupCreated) {
+        SetMessageLocked(forced ? L"Forced AV database update completed; backup created" : L"Periodic AV database update completed; backup created");
+    } else {
+        SetMessageLocked(forced ? L"Forced AV database update completed" : L"Periodic AV database update completed");
+    }
     LeaveCriticalSection(&g_state_lock);
     return ERROR_SUCCESS;
+}
+
+DWORD RequestAntivirusRecordRepairFromServer() {
+    // The current web service exposes the antivirus database as /api/signatures.
+    // Therefore a damaged record is repaired by a forced update from the update server.
+    return UpdateAntivirusDatabaseFromServerWithRollback(true);
 }
 
 void ClearAntivirusDatabase() {
@@ -1878,7 +2163,7 @@ DWORD ActivateProductInternal(const std::wstring& activation_code) {
         }
     }
 
-    return LoadAntivirusDatabaseFromServer();
+    return UpdateAntivirusDatabaseFromServerWithRollback(false);
 }
 
 
@@ -2325,12 +2610,33 @@ extern "C" unsigned long BmtxRefreshLicenseState(handle_t, BMTX_CLIENT_STATE* st
     if (has_license) {
         result = RefreshLicenseInternal();
         if (result == ERROR_SUCCESS) {
-            result = LoadAntivirusDatabaseFromServer();
+            result = UpdateAntivirusDatabaseFromServerWithRollback(false);
         }
     } else {
         result = ERROR_LICENSE_QUOTA_EXCEEDED;
     }
     FillClientState(state);
+    return result;
+}
+
+
+extern "C" unsigned long BmtxUpdateAvDatabase(handle_t, BMTX_AV_DB_INFO* info) {
+    if (info == nullptr) {
+        return ERROR_INVALID_PARAMETER;
+    }
+    ZeroMemory(info, sizeof(*info));
+    const DWORD result = UpdateAntivirusDatabaseFromServerWithRollback(true);
+
+    EnterCriticalSection(&g_av_lock);
+    info->releaseDateUnix = FileTimeToUnixSeconds(g_av_database.releaseDate);
+    info->recordCount = CountAvRecordsLocked();
+    LeaveCriticalSection(&g_av_lock);
+    StringCchCopyW(info->engineName, ARRAYSIZE(info->engineName), L"BMTX Binary AV Engine");
+    if (result == ERROR_SUCCESS) {
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database updated and verified by RSA signature");
+    } else {
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"AV database update failed; backup/default recovery was attempted");
+    }
     return result;
 }
 
@@ -2340,9 +2646,6 @@ extern "C" unsigned long BmtxGetAvDbInfo(handle_t, BMTX_AV_DB_INFO* info) {
     }
     ZeroMemory(info, sizeof(*info));
 
-    // Important: this RPC method is also the manual "reload DB from server" action.
-    // If signatures are uploaded in Postman after activation, clicking "Инфо баз"
-    // must download the fresh server state instead of returning the old in-memory cache.
     DWORD load_result = ERROR_SUCCESS;
     EnterCriticalSection(&g_av_lock);
     const bool already_loaded = g_av_database.loaded;
@@ -2357,7 +2660,7 @@ extern "C" unsigned long BmtxGetAvDbInfo(handle_t, BMTX_AV_DB_INFO* info) {
     LeaveCriticalSection(&g_av_lock);
     StringCchCopyW(info->engineName, ARRAYSIZE(info->engineName), L"BMTX Binary AV Engine");
     if (load_result == ERROR_SUCCESS) {
-        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database is loaded from signed binary storage");
+        StringCchCopyW(info->message, ARRAYSIZE(info->message), L"Antivirus database is loaded from RSA-signed binary storage");
     } else {
         StringCchCopyW(info->message, ARRAYSIZE(info->message), L"AV database was not loaded from disk/default storage");
     }

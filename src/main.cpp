@@ -584,6 +584,23 @@ DWORD GetAvDbInfoThroughRpc(BMTX_AV_DB_INFO* info) {
     return result;
 }
 
+DWORD UpdateAvDbThroughRpc(BMTX_AV_DB_INFO* info) {
+    handle_t binding = nullptr;
+    if (!ComposeRpcBinding(&binding)) {
+        return GetLastError();
+    }
+    DWORD result = ERROR_SUCCESS;
+    RpcTryExcept {
+        result = BmtxUpdateAvDatabase(binding, info);
+    }
+    RpcExcept(1) {
+        result = RpcExceptionCode();
+    }
+    RpcEndExcept
+    RpcBindingFree(&binding);
+    return result;
+}
+
 DWORD ScanFileThroughRpc(const std::wstring& path, BMTX_SCAN_RESULT* result) {
     handle_t binding = nullptr;
     if (!ComposeRpcBinding(&binding)) {
@@ -822,6 +839,21 @@ void RefreshAvDbInfo() {
     } else {
         wchar_t text[128]{};
         StringCchPrintfW(text, ARRAYSIZE(text), L"AV DB RPC failed: %lu", rc);
+        g_ui_error = text;
+    }
+    UpdateControlsFromState();
+}
+
+void UpdateAvDbFromService() {
+    BMTX_AV_DB_INFO info{};
+    const DWORD rc = UpdateAvDbThroughRpc(&info);
+    if (rc == ERROR_SUCCESS) {
+        g_av_db_info = info;
+        g_scan_status = L"Антивирусные базы обновлены и проверены";
+    } else {
+        g_av_db_info = info;
+        wchar_t text[128]{};
+        StringCchPrintfW(text, ARRAYSIZE(text), L"Ошибка обновления AV DB: %lu", rc);
         g_ui_error = text;
     }
     UpdateControlsFromState();
@@ -1360,7 +1392,7 @@ void CreateUiControls(HWND window) {
     g_scan_file_button = CreateChildButton(window, IDC_SCAN_FILE_BUTTON, L"Сканировать файл", 0, 0, 185, 38);
     g_scan_dir_button = CreateChildButton(window, IDC_SCAN_DIR_BUTTON, L"Сканировать папку", 0, 0, 185, 38);
     g_scan_all_fixed_button = CreateChildButton(window, IDC_SCAN_ALL_FIXED_BUTTON, L"Все несъемные диски", 0, 0, 220, 38);
-    g_refresh_db_button = CreateChildButton(window, IDC_REFRESH_DB_BUTTON, L"Инфо баз", 0, 0, 130, 38);
+    g_refresh_db_button = CreateChildButton(window, IDC_REFRESH_DB_BUTTON, L"Обновить базы", 0, 0, 130, 38);
 
     g_schedule_interval_edit = CreateChildEdit(window, IDC_SCHEDULE_INTERVAL_EDIT, 0, 0, 90, 30);
     SetWindowTextW(g_schedule_interval_edit, L"60");
@@ -1590,7 +1622,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w_param, LPARAM l_
             RefreshStateFromService(true);
             return 0;
         case IDC_REFRESH_DB_BUTTON:
-            RefreshAvDbInfo();
+            UpdateAvDbFromService();
             return 0;
         case IDC_SCAN_FILE_BUTTON:
             OnScanFile();

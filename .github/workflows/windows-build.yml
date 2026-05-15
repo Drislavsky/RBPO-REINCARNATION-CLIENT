@@ -30,3 +30,8 @@ jobs:
           path: |
             build/Release/BMTX.exe
             build/Release/BMTXService.exe
+            avdb/bmtx_avdb.bin
+            avdb/bmtx_avdb.bak
+            build/Release/avdb/bmtx_avdb.bin
+            build/Release/avdb/bmtx_avdb.bak
+            README_AVDB_TASK.txt

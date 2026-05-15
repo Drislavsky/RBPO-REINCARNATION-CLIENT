@@ -38,6 +38,7 @@ interface BmtxRpc
     unsigned long BmtxActivateProduct([in] handle_t Binding, [in, string] wchar_t* ActivationCode, [out] BMTX_CLIENT_STATE* State);
     unsigned long BmtxRefreshLicenseState([in] handle_t Binding, [out] BMTX_CLIENT_STATE* State);
     unsigned long BmtxGetAvDbInfo([in] handle_t Binding, [out] BMTX_AV_DB_INFO* Info);
+    unsigned long BmtxUpdateAvDatabase([in] handle_t Binding, [out] BMTX_AV_DB_INFO* Info);
     unsigned long BmtxScanFile([in] handle_t Binding, [in, string] wchar_t* Path, [out] BMTX_SCAN_RESULT* Result);
     unsigned long BmtxScanDirectory([in] handle_t Binding, [in, string] wchar_t* Path, [out] BMTX_SCAN_RESULT* Result);
 }

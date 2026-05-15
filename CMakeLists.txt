@@ -100,3 +100,13 @@ endif()
 
 install(TARGETS BMTX BMTXService RUNTIME DESTINATION .)
 install(FILES assets/bmtx.ico DESTINATION assets)
+
+install(FILES avdb/bmtx_avdb.bin avdb/bmtx_avdb.bak DESTINATION avdb)
+
+
+add_custom_target(copy_avdb_to_runtime ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BMTXService>/avdb"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/avdb/bmtx_avdb.bin" "$<TARGET_FILE_DIR:BMTXService>/avdb/bmtx_avdb.bin"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/avdb/bmtx_avdb.bak" "$<TARGET_FILE_DIR:BMTXService>/avdb/bmtx_avdb.bak"
+    DEPENDS BMTXService
+)
