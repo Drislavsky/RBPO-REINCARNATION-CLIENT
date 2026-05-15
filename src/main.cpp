@@ -97,6 +97,8 @@ DWORD g_schedule_interval_minutes = 0;
 bool g_schedule_enabled = false;
 bool g_monitoring_enabled = false;
 volatile LONG g_background_scan_running = 0;
+HANDLE g_background_scan_thread = nullptr;
+std::wstring g_background_scan_title;
 int g_scroll_y = 0;
 double g_ui_scale = 1.0;
 int g_content_offset_x = 0;
@@ -982,6 +984,43 @@ DWORD WINAPI DirectoryScanWorkerThread(LPVOID parameter) {
     return 0;
 }
 
+bool IsBackgroundScanStillRunning() {
+    if (InterlockedCompareExchange(&g_background_scan_running, 0, 0) == 0) {
+        if (g_background_scan_thread != nullptr) {
+            CloseHandle(g_background_scan_thread);
+            g_background_scan_thread = nullptr;
+        }
+        g_background_scan_title.clear();
+        return false;
+    }
+
+    if (g_background_scan_thread == nullptr) {
+        InterlockedExchange(&g_background_scan_running, 0);
+        g_background_scan_title.clear();
+        return false;
+    }
+
+    const DWORD wait_result = WaitForSingleObject(g_background_scan_thread, 0);
+    if (wait_result == WAIT_TIMEOUT) {
+        return true;
+    }
+
+    CloseHandle(g_background_scan_thread);
+    g_background_scan_thread = nullptr;
+    InterlockedExchange(&g_background_scan_running, 0);
+    g_background_scan_title.clear();
+    return false;
+}
+
+void MarkBackgroundScanFinished() {
+    InterlockedExchange(&g_background_scan_running, 0);
+    g_background_scan_title.clear();
+    if (g_background_scan_thread != nullptr) {
+        CloseHandle(g_background_scan_thread);
+        g_background_scan_thread = nullptr;
+    }
+}
+
 void StartDirectoryListScanAsync(const std::vector<std::wstring>& directories, const wchar_t* title) {
     if (directories.empty()) {
         g_ui_error = L"No directories selected for scanning";
@@ -989,30 +1028,38 @@ void StartDirectoryListScanAsync(const std::vector<std::wstring>& directories, c
         return;
     }
 
-    if (InterlockedCompareExchange(&g_background_scan_running, 1, 0) != 0) {
-        g_scan_status = L"Сканирование уже выполняется. Новый запуск пропущен, чтобы приложение не зависало.";
+    if (IsBackgroundScanStillRunning()) {
+        g_scan_status = L"Фоновое сканирование уже выполняется";
+        if (!g_background_scan_title.empty()) {
+            g_scan_status += L": ";
+            g_scan_status += g_background_scan_title;
+        }
+        g_scan_status += L". Повторный запуск пропущен. Дождитесь результата.";
         UpdateControlsFromState();
         return;
     }
+
+    InterlockedExchange(&g_background_scan_running, 1);
+    g_background_scan_title = title != nullptr ? title : L"Сканирование";
 
     AsyncScanRequest* request = new AsyncScanRequest();
     request->directories = directories;
     request->title = title;
 
     g_ui_error.clear();
-    g_scan_status = L"Сканирование запущено в фоне. Окно можно использовать, дождитесь результата.";
+    g_scan_status = g_background_scan_title + L": запущено в фоне. Окно можно использовать, дождитесь результата.";
     UpdateControlsFromState();
 
     HANDLE thread = CreateThread(nullptr, 0, DirectoryScanWorkerThread, request, 0, nullptr);
     if (thread == nullptr) {
         delete request;
-        InterlockedExchange(&g_background_scan_running, 0);
+        MarkBackgroundScanFinished();
         ShowLastErrorMessage(L"CreateThread");
         g_scan_status.clear();
         UpdateControlsFromState();
         return;
     }
-    CloseHandle(thread);
+    g_background_scan_thread = thread;
 }
 
 void OnScanAllFixedDrives() {
@@ -1044,7 +1091,7 @@ void OnStopScheduledScan() {
     KillTimer(g_main_window, kScheduledScanTimerId);
     g_schedule_enabled = false;
     g_schedule_interval_minutes = 0;
-    g_scan_status = L"Scheduled scan disabled";
+    g_scan_status = L"Расписание отключено. Новые запуски по таймеру остановлены.";
     g_ui_error.clear();
     UpdateControlsFromState();
 }
@@ -1492,9 +1539,9 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w_param, LPARAM l_
         return 0;
 
     case kAsyncScanCompleteMessage:
+        MarkBackgroundScanFinished();
         ApplyDirectoryScanResult(reinterpret_cast<AsyncScanResult*>(l_param));
         delete reinterpret_cast<AsyncScanResult*>(l_param);
-        InterlockedExchange(&g_background_scan_running, 0);
         return 0;
 
     case WM_TIMER:

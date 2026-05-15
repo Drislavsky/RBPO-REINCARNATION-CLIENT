@@ -669,30 +669,45 @@ DWORD ScanSingleFile(const std::wstring& path, BMTX_SCAN_RESULT* result) {
     return ERROR_SUCCESS;
 }
 
-void ScanDirectoryRecursive(const std::wstring& directory, BMTX_SCAN_RESULT* aggregate) {
+const DWORD kMaxFilesPerDirectoryScan = 1000;
+
+void ScanDirectoryRecursive(const std::wstring& directory, BMTX_SCAN_RESULT* aggregate, DWORD maxFiles) {
+    if (aggregate == nullptr || aggregate->scannedObjects >= maxFiles) {
+        return;
+    }
+
     std::wstring mask = directory;
     if (!mask.empty() && mask.back() != L'\\' && mask.back() != L'/') {
         mask += L"\\";
     }
     mask += L"*";
+
     WIN32_FIND_DATAW fd{};
     HANDLE find = FindFirstFileW(mask.c_str(), &fd);
     if (find == INVALID_HANDLE_VALUE) {
         return;
     }
+
     do {
+        if (aggregate->scannedObjects >= maxFiles) {
+            break;
+        }
+
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) {
             continue;
         }
+
         std::wstring path = directory;
         if (!path.empty() && path.back() != L'\\' && path.back() != L'/') {
             path += L"\\";
         }
         path += fd.cFileName;
+
         if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-            ScanDirectoryRecursive(path, aggregate);
+            ScanDirectoryRecursive(path, aggregate, maxFiles);
             continue;
         }
+
         BMTX_SCAN_RESULT one{};
         if (ScanSingleFile(path, &one) == ERROR_SUCCESS) {
             aggregate->scannedObjects += one.scannedObjects;
@@ -703,6 +718,7 @@ void ScanDirectoryRecursive(const std::wstring& directory, BMTX_SCAN_RESULT* agg
             }
         }
     } while (FindNextFileW(find, &fd));
+
     FindClose(find);
 }
 
@@ -1909,11 +1925,19 @@ extern "C" unsigned long BmtxScanDirectory(handle_t, wchar_t* path, BMTX_SCAN_RE
         return load_result;
     }
     ZeroMemory(result, sizeof(*result));
-    ScanDirectoryRecursive(path, result);
+    ScanDirectoryRecursive(path, result, kMaxFilesPerDirectoryScan);
     if (result->infectedObjects > 0) {
-        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"Threats found in directory");
+        if (result->scannedObjects >= kMaxFilesPerDirectoryScan) {
+            StringCchCopyW(result->message, ARRAYSIZE(result->message), L"Threats found in directory. Scan limit reached: 1000 files");
+        } else {
+            StringCchCopyW(result->message, ARRAYSIZE(result->message), L"Threats found in directory");
+        }
     } else {
-        StringCchCopyW(result->message, ARRAYSIZE(result->message), L"No threats found in directory");
+        if (result->scannedObjects >= kMaxFilesPerDirectoryScan) {
+            StringCchCopyW(result->message, ARRAYSIZE(result->message), L"No threats found in first 1000 files");
+        } else {
+            StringCchCopyW(result->message, ARRAYSIZE(result->message), L"No threats found in directory");
+        }
     }
     return ERROR_SUCCESS;
 }
