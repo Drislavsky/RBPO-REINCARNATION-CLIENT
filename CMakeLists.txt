@@ -16,7 +16,16 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-find_program(MIDL_EXECUTABLE midl REQUIRED)
+find_program(MIDL_EXECUTABLE
+    NAMES midl midl.exe
+    PATHS
+        "$ENV{WindowsSdkDir}/bin/$ENV{WindowsSDKVersion}/x64"
+        "$ENV{WindowsSdkDir}/bin/$ENV{WindowsSDKVersion}/x86"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22621.0/x64"
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.0.22000.0/x64"
+    REQUIRED
+)
 
 set(RPC_IDL ${CMAKE_CURRENT_SOURCE_DIR}/rpc/bmtx_rpc.idl)
 set(RPC_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -110,10 +119,8 @@ endif()
 
 install(TARGETS BMTX BMTXService RUNTIME DESTINATION .)
 install(FILES assets/bmtx.ico DESTINATION assets)
-install(FILES README_AVDB_TASK.txt README_INSTALLER_TASK.txt DESTINATION .)
-
+install(FILES assets/bmtx_icon_preview.png DESTINATION assets)
 install(FILES avdb/bmtx_avdb.bin avdb/bmtx_avdb.bak DESTINATION avdb)
-
 
 add_custom_target(copy_avdb_to_runtime ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BMTXService>/avdb"
@@ -122,22 +129,23 @@ add_custom_target(copy_avdb_to_runtime ALL
     DEPENDS BMTXService
 )
 
+find_program(MAKENSIS_EXECUTABLE
+    NAMES makensis makensis.exe
+    PATHS
+        "$ENV{ProgramFiles\(x86\)}/NSIS"
+        "C:/Program Files (x86)/NSIS"
+        "C:/Program Files/NSIS"
+    REQUIRED
+)
 
-# Installer support. The GitHub Actions workflow installs NSIS and invokes this
-# target after building Release binaries. It creates a single Windows installer
-# that installs the client, service, resources, default AV databases, and
-# registers the Windows service for automatic startup.
-find_program(MAKENSIS_EXECUTABLE makensis)
-if(MAKENSIS_EXECUTABLE)
-    add_custom_target(BMTXInstaller
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/installer"
-        COMMAND "${MAKENSIS_EXECUTABLE}"
-            /DAPP_BUILD_DIR="$<TARGET_FILE_DIR:BMTX>"
-            /DPROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-            /DOUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/installer"
-            "${CMAKE_CURRENT_SOURCE_DIR}/installer/BMTXInstaller.nsi"
-        DEPENDS BMTX BMTXService copy_avdb_to_runtime
-        BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/installer/BMTXSetup.exe"
-        COMMENT "Building BMTX NSIS installer"
-    )
-endif()
+add_custom_target(BMTXInstaller
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/installer"
+    COMMAND "${MAKENSIS_EXECUTABLE}"
+        /DAPP_BUILD_DIR="$<TARGET_FILE_DIR:BMTX>"
+        /DPROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        /DOUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/installer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/installer/BMTXInstaller.nsi"
+    DEPENDS BMTX BMTXService copy_avdb_to_runtime
+    BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/installer/BMTXSetup.exe"
+    COMMENT "Building BMTX NSIS installer"
+)
