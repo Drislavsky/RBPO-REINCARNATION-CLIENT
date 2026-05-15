@@ -1,10 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(BMTX LANGUAGES C CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Link the MSVC runtime statically so the installer does not need to deploy
+# a separate Visual C++ Redistributable package on the target machine.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 find_program(MIDL_EXECUTABLE midl REQUIRED)
 
@@ -100,6 +110,7 @@ endif()
 
 install(TARGETS BMTX BMTXService RUNTIME DESTINATION .)
 install(FILES assets/bmtx.ico DESTINATION assets)
+install(FILES README_AVDB_TASK.txt README_INSTALLER_TASK.txt DESTINATION .)
 
 install(FILES avdb/bmtx_avdb.bin avdb/bmtx_avdb.bak DESTINATION avdb)
 
@@ -110,3 +121,23 @@ add_custom_target(copy_avdb_to_runtime ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/avdb/bmtx_avdb.bak" "$<TARGET_FILE_DIR:BMTXService>/avdb/bmtx_avdb.bak"
     DEPENDS BMTXService
 )
+
+
+# Installer support. The GitHub Actions workflow installs NSIS and invokes this
+# target after building Release binaries. It creates a single Windows installer
+# that installs the client, service, resources, default AV databases, and
+# registers the Windows service for automatic startup.
+find_program(MAKENSIS_EXECUTABLE makensis)
+if(MAKENSIS_EXECUTABLE)
+    add_custom_target(BMTXInstaller
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/installer"
+        COMMAND "${MAKENSIS_EXECUTABLE}"
+            /DAPP_BUILD_DIR="$<TARGET_FILE_DIR:BMTX>"
+            /DPROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+            /DOUT_DIR="${CMAKE_CURRENT_BINARY_DIR}/installer"
+            "${CMAKE_CURRENT_SOURCE_DIR}/installer/BMTXInstaller.nsi"
+        DEPENDS BMTX BMTXService copy_avdb_to_runtime
+        BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/installer/BMTXSetup.exe"
+        COMMENT "Building BMTX NSIS installer"
+    )
+endif()
